@@ -44,16 +44,16 @@ graph TD
         DB[(Analytical Database sqlite/postgres)]
     end
 
-    UI -- 1. Scrub Slider Params --> TE
-    TE -- 2. Optimistic Update <1ms --> UI
-    TE -- 3. Debounced Async Verify --> DP
-    DP -- 4. Return Validated Epistemic State --> UI
+    UI -->|1. Scrub Slider Params| TE
+    TE -->|2. Optimistic Update <1ms| UI
+    TE -->|3. Debounced Async Verify| DP
+    DP -->|4. Return Validated Epistemic State| UI
     
-    UI -- 5. User clashes with AI --> SF
-    SF -- 6. Submits Challenge Payload --> TL
-    TE -- Sends interaction logs --> TL
+    UI -->|5. User clashes with AI| SF
+    SF -->|6. Submits Challenge Payload| TL
+    TE -->|Sends interaction logs| TL
     
-    TL -. 7. Persist Event Stream .-> DB
+    TL -.->|7. Persist Event Stream| DB
 ```
 
 ---
