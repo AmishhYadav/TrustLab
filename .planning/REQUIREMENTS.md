@@ -23,4 +23,11 @@
 - [Hardcoding specific ML model weights into the client] — Breaks the requirement for a model-agnostic schema testing framework.
 
 ## Traceability
-*(To be populated by the roadmap agent)*
+- **INFRA-01**: Phase 1
+- **INFRA-02**: Phase 1
+- **INFRA-03**: Phase 1
+- **UI-01**: Phase 2
+- **UI-02**: Phase 2
+- **UI-03**: Phase 3
+- **UI-04**: Phase 3
+- **DISAGREE-01**: Phase 4
