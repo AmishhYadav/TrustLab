@@ -29,6 +29,7 @@ interface TrustRound {
   trustState: TrustState;
   timeSpentMs: number;
   interactionCount: number;
+  overrideAttempts: number;
   timestamp: number;
 }
 
@@ -37,6 +38,8 @@ interface TrustEngineContextValue {
   trustState: TrustState;
   /** Number of slider/counterfactual interactions this round. */
   interactionCount: number;
+  /** Cumulative number of AI overrides across all rounds. */
+  overrideAttempts: number;
   /** Full history of trust states across rounds. */
   trustHistory: TrustRound[];
   /** Whether the explicit rating modal is currently shown. */
@@ -47,6 +50,8 @@ interface TrustEngineContextValue {
   submitDecision: () => void;
   /** Dismiss the explicit rating modal after user rates. */
   submitExplicitRating: (rating: number) => void;
+  /** Increment the override counter (called from Street Fight Mode). */
+  incrementOverride: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +79,7 @@ export function useTrustEngine(): TrustEngineContextValue {
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = "trustlab_trust_history";
+const OVERRIDE_STORAGE_KEY = "trustlab_override_attempts";
 
 /** Thresholds from RESEARCH.md */
 const OVER_RELIANT_TIME_MS = 3000;
@@ -97,9 +103,10 @@ export default function TrustEngineProvider({
   const [trustState, setTrustState] = useState<TrustState>("UNKNOWN");
   const [trustHistory, setTrustHistory] = useState<TrustRound[]>([]);
   const [showRatingModal, setShowRatingModal] = useState(false);
+  const [overrideAttempts, setOverrideAttempts] = useState(0);
   const roundIndexRef = useRef(0);
 
-  // Hydrate trust history from sessionStorage on mount
+  // Hydrate trust history and override attempts from sessionStorage on mount
   useEffect(() => {
     try {
       const stored = sessionStorage.getItem(STORAGE_KEY);
@@ -112,6 +119,11 @@ export default function TrustEngineProvider({
         if (parsed.length > 0) {
           setTrustState(parsed[parsed.length - 1].trustState);
         }
+      }
+
+      const storedOverrides = sessionStorage.getItem(OVERRIDE_STORAGE_KEY);
+      if (storedOverrides) {
+        setOverrideAttempts(Number(storedOverrides) || 0);
       }
     } catch {
       // Corrupted storage — start fresh
@@ -160,6 +172,7 @@ export default function TrustEngineProvider({
       trustState: newState,
       timeSpentMs: timeSpent,
       interactionCount: currentInteractions,
+      overrideAttempts,
       timestamp: Date.now(),
     };
 
@@ -216,26 +229,45 @@ export default function TrustEngineProvider({
   );
 
   // ------------------------------------------------------------------
+  // incrementOverride — called when user forces an override in Street Fight Mode
+  // ------------------------------------------------------------------
+  const incrementOverride = useCallback(() => {
+    setOverrideAttempts((prev) => {
+      const next = prev + 1;
+      try {
+        sessionStorage.setItem(OVERRIDE_STORAGE_KEY, String(next));
+      } catch {
+        console.warn("[TrustEngine] Failed to persist override attempts");
+      }
+      return next;
+    });
+  }, []);
+
+  // ------------------------------------------------------------------
   // Context value
   // ------------------------------------------------------------------
   const value = useMemo<TrustEngineContextValue>(
     () => ({
       trustState,
       interactionCount,
+      overrideAttempts,
       trustHistory,
       showRatingModal,
       recordInteraction,
       submitDecision,
       submitExplicitRating,
+      incrementOverride,
     }),
     [
       trustState,
       interactionCount,
+      overrideAttempts,
       trustHistory,
       showRatingModal,
       recordInteraction,
       submitDecision,
       submitExplicitRating,
+      incrementOverride,
     ]
   );
 
