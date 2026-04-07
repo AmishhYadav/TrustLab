@@ -10,6 +10,7 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { trackTrustEvent } from "@/lib/telemetry";
 import { useSession } from "./SessionProvider";
 
@@ -241,6 +242,67 @@ export default function TrustEngineProvider({
   return (
     <TrustEngineContext.Provider value={value}>
       {children}
+
+      {/* Explicit trust rating modal — fixed overlay */}
+      <AnimatePresence>
+        {showRatingModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)" }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="rounded-2xl border border-neutral-700 bg-neutral-900/95 backdrop-blur-xl p-8 max-w-md w-full mx-4 shadow-2xl"
+            >
+              <div className="text-center space-y-6">
+                {/* Pulse indicator */}
+                <motion.div
+                  className="mx-auto h-3 w-3 rounded-full bg-amber-400"
+                  animate={{ scale: [1, 1.4, 1], opacity: [0.7, 1, 0.7] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                />
+
+                <div className="space-y-2">
+                  <h3 className="text-lg font-semibold text-white">
+                    Quick check
+                  </h3>
+                  <p className="text-sm text-neutral-400 leading-relaxed">
+                    How much do you trust the system&apos;s prediction right now?
+                  </p>
+                </div>
+
+                {/* 1-5 scale buttons */}
+                <div className="flex items-center justify-center gap-3">
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <motion.button
+                      key={rating}
+                      whileHover={{ scale: 1.15, y: -2 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => submitExplicitRating(rating)}
+                      className="w-12 h-12 rounded-xl border border-neutral-700 bg-neutral-800/80 text-white font-semibold text-lg transition-colors duration-150 hover:border-blue-400 hover:bg-blue-400/10 hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                    >
+                      {rating}
+                    </motion.button>
+                  ))}
+                </div>
+
+                {/* Scale labels */}
+                <div className="flex justify-between text-xs text-neutral-600 px-2">
+                  <span>Not at all</span>
+                  <span>Completely</span>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </TrustEngineContext.Provider>
   );
 }
