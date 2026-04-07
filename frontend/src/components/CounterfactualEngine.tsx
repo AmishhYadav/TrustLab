@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sliders, Zap, ArrowRight, ShieldAlert, AlertOctagon } from "lucide-react";
+import {
+  Sliders,
+  Zap,
+  ArrowRight,
+  ShieldAlert,
+  Swords,
+  CheckCircle,
+  XCircle,
+  Send,
+  Tag,
+} from "lucide-react";
 import EpistemicOrb from "./EpistemicOrb";
 import { useSession } from "./SessionProvider";
 import { useTrustEngine } from "./TrustEngineProvider";
@@ -52,7 +62,13 @@ const BASE_AMBIGUITY_THRESHOLD = 0.55;
 
 export default function CounterfactualEngine() {
   const { participantId } = useSession();
-  const { trustState, recordInteraction, submitDecision } = useTrustEngine();
+  const {
+    trustState,
+    recordInteraction,
+    submitDecision,
+    overrideAttempts,
+    incrementOverride,
+  } = useTrustEngine();
 
   // Force ambiguity when user is over-reliant (adaptive UX)
   const isOverReliant = trustState === "OVER_RELIANT";
@@ -74,6 +90,89 @@ export default function CounterfactualEngine() {
   const [isSyncing, setIsSyncing] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSliderRef = useRef(SCENARIO.baseIncome);
+
+  // Street Fight Mode state
+  const [isChallenging, setIsChallenging] = useState(false);
+  const [userDecision, setUserDecision] = useState("");
+  const [reasoningText, setReasoningText] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  const CHALLENGE_TAGS = ["Missed context", "Biased training data", "Edge case"] as const;
+
+  // ------------------------------------------------------------------
+  // Progressive friction messages based on override attempts
+  // ------------------------------------------------------------------
+  const getFrictionMessage = useCallback(() => {
+    if (overrideAttempts === 0) {
+      return "You are contradicting the AI\u2019s recommendation. Please justify your override.";
+    }
+    if (overrideAttempts === 1) {
+      return "Are you sure? Overrides at this confidence level have an 82% failure rate.";
+    }
+    return "Extreme caution. This goes against all pattern matches. Document extensive reasoning.";
+  }, [overrideAttempts]);
+
+  // ------------------------------------------------------------------
+  // User outcome selection — detect conflict with AI
+  // ------------------------------------------------------------------
+  const handleOutcomeSelection = useCallback(
+    (outcome: "approve" | "reject") => {
+      const aiApproves = prediction.toLowerCase().includes("approve");
+      const userApproves = outcome === "approve";
+
+      if (aiApproves === userApproves) {
+        // Agreement — proceed normally
+        submitDecision();
+      } else {
+        // Conflict — enter Street Fight Mode
+        setUserDecision(outcome === "approve" ? "Approve Loan" : "Reject Loan");
+        setIsChallenging(true);
+      }
+    },
+    [prediction, submitDecision],
+  );
+
+  // ------------------------------------------------------------------
+  // Toggle a challenge tag
+  // ------------------------------------------------------------------
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Force Override — fires telemetry + completes round
+  // ------------------------------------------------------------------
+  const handleForceOverride = useCallback(() => {
+    incrementOverride();
+
+    trackTrustEvent(participantId, "challenge_submitted", {
+      user_decision: userDecision,
+      ai_prediction: prediction,
+      reasoning_text: reasoningText,
+      selected_tags: selectedTags,
+      override_attempts: overrideAttempts + 1,
+    });
+
+    // Clean up and finalize
+    setIsChallenging(false);
+    setReasoningText("");
+    setSelectedTags([]);
+    setUserDecision("");
+    submitDecision();
+  }, [
+    incrementOverride,
+    participantId,
+    userDecision,
+    prediction,
+    reasoningText,
+    selectedTags,
+    overrideAttempts,
+    submitDecision,
+  ]);
+
+  const canForceOverride = reasoningText.trim().length > 0 || selectedTags.length > 0;
 
   // ------------------------------------------------------------------
   // Optimistic confidence calculation (synchronous, <1ms)
@@ -295,21 +394,149 @@ export default function CounterfactualEngine() {
         </p>
       </motion.div>
 
-      {/* Submit Decision button */}
-      <motion.button
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        whileHover={{ scale: 1.02, y: -1 }}
-        whileTap={{ scale: 0.98 }}
-        onClick={submitDecision}
-        className="w-full max-w-xs rounded-xl border border-blue-500/30 bg-gradient-to-r from-blue-600/20 to-blue-500/10 backdrop-blur-sm px-6 py-3.5 text-sm font-semibold text-blue-300 transition-all duration-200 hover:border-blue-400/50 hover:from-blue-600/30 hover:to-blue-500/20 hover:text-blue-200 hover:shadow-[0_0_20px_rgba(59,130,246,0.15)] focus:outline-none focus:ring-2 focus:ring-blue-400/30"
-      >
-        <span className="flex items-center justify-center gap-2">
-          <AlertOctagon size={16} />
-          Submit Decision
-        </span>
-      </motion.button>
+      {/* Decision outcome buttons OR Street Fight Mode */}
+      <AnimatePresence mode="wait">
+        {!isChallenging ? (
+          <motion.div
+            key="outcome-buttons"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ delay: 0.5 }}
+            className="flex items-center gap-4 w-full max-w-md"
+          >
+            <motion.button
+              whileHover={{ scale: 1.03, y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => handleOutcomeSelection("approve")}
+              className="flex-1 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-emerald-300 transition-all duration-200 hover:border-emerald-400/50 hover:from-emerald-600/30 hover:to-emerald-500/20 hover:text-emerald-200 hover:shadow-[0_0_20px_rgba(16,185,129,0.15)] focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <CheckCircle size={16} />
+                Approve Loan
+              </span>
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.03, y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => handleOutcomeSelection("reject")}
+              className="flex-1 rounded-xl border border-red-500/30 bg-gradient-to-r from-red-600/20 to-red-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-red-300 transition-all duration-200 hover:border-red-400/50 hover:from-red-600/30 hover:to-red-500/20 hover:text-red-200 hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] focus:outline-none focus:ring-2 focus:ring-red-400/30"
+            >
+              <span className="flex items-center justify-center gap-2">
+                <XCircle size={16} />
+                Reject Loan
+              </span>
+            </motion.button>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="street-fight"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+            transition={{ type: "spring", damping: 22, stiffness: 260 }}
+            className="w-full max-w-2xl rounded-2xl border border-amber-500/40 bg-gradient-to-b from-amber-950/30 to-neutral-900/80 backdrop-blur-xl p-6 space-y-5"
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <motion.div
+                animate={{ rotate: [0, -8, 8, -4, 0] }}
+                transition={{ duration: 0.6, repeat: Infinity, repeatDelay: 3 }}
+              >
+                <Swords size={22} className="text-amber-400" />
+              </motion.div>
+              <div>
+                <h3 className="text-base font-semibold text-amber-200">
+                  Street Fight Mode
+                </h3>
+                <p className="text-xs text-amber-400/70">
+                  You chose: <span className="font-medium text-white">{userDecision}</span> — AI recommended: <span className="font-medium text-white">{prediction}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Progressive friction warning */}
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${
+                overrideAttempts > 1
+                  ? "border-red-500/50 bg-red-950/40 text-red-300"
+                  : overrideAttempts === 1
+                    ? "border-orange-500/50 bg-orange-950/30 text-orange-300"
+                    : "border-amber-500/40 bg-amber-950/20 text-amber-300"
+              }`}
+            >
+              {getFrictionMessage()}
+            </motion.div>
+
+            {/* Quick tags */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs text-neutral-500 uppercase tracking-wider">
+                <Tag size={12} />
+                Quick Tags
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CHALLENGE_TAGS.map((tag) => {
+                  const isSelected = selectedTags.includes(tag);
+                  return (
+                    <motion.button
+                      key={tag}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => toggleTag(tag)}
+                      className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150 ${
+                        isSelected
+                          ? "border-amber-400 bg-amber-400/20 text-amber-200"
+                          : "border-neutral-700 bg-neutral-800/60 text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
+                      }`}
+                    >
+                      {tag}
+                    </motion.button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Free-text reasoning */}
+            <div className="space-y-2">
+              <label
+                htmlFor="reasoning-text"
+                className="block text-xs text-neutral-500 uppercase tracking-wider"
+              >
+                Your reasoning
+              </label>
+              <textarea
+                id="reasoning-text"
+                value={reasoningText}
+                onChange={(e) => setReasoningText(e.target.value)}
+                placeholder="Explain why you disagree with the AI\u2019s recommendation\u2026"
+                rows={3}
+                className="w-full rounded-xl border border-neutral-700 bg-neutral-800/60 px-4 py-3 text-sm text-white placeholder-neutral-600 backdrop-blur-sm transition-colors duration-150 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-400/20 resize-none"
+              />
+            </div>
+
+            {/* Force Override button */}
+            <motion.button
+              whileHover={canForceOverride ? { scale: 1.02, y: -1 } : {}}
+              whileTap={canForceOverride ? { scale: 0.98 } : {}}
+              onClick={handleForceOverride}
+              disabled={!canForceOverride}
+              className={`w-full rounded-xl border px-6 py-3.5 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 ${
+                canForceOverride
+                  ? "border-amber-500/40 bg-gradient-to-r from-amber-600/25 to-amber-500/15 text-amber-200 hover:border-amber-400/60 hover:from-amber-600/35 hover:to-amber-500/25 hover:text-amber-100 hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] focus:ring-amber-400/30"
+                  : "border-neutral-700 bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
+              }`}
+            >
+              <span className="flex items-center justify-center gap-2">
+                <Send size={16} />
+                Force Override
+              </span>
+            </motion.button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
