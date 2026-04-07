@@ -2,7 +2,7 @@
 
 An advanced, model-agnostic Human–AI interaction platform designed to study, measure, and calibrate human trust in AI predictions during high-stakes decision-making.
 
-TrustLab replaces static "confidence scores" with visceral, adaptive UI components that react to both the AI's epistemic uncertainty and the user's behavioral reliance in real-time.
+TrustLab replaces static "confidence scores" with visceral, adaptive UI components that react to both the AI's epistemic uncertainty and the user's behavioral reliance in real-time. It recently expanded from a single scenario demo into a **full experiment-driven workflow**.
 
 ---
 
@@ -15,10 +15,12 @@ Instead of passive consumption, users are forced to probe predictions, visualize
 
 ## ✨ Key Features
 
+* **Multi-Scenario Experiment Workflow**: Runs users through a structured 10-scenario experiment (or an open Playground Mode) featuring curated trust profiles: trust-building cases, over-trust traps, under-trust tests, and conflict scenarios.
 * **The Epistemic Orb**: A glassmorphic visual indicator that morphs based on AI state. High confidence yields a sharp, steady pulse. High ambiguity or uncertainty introduces edge-blurring and shifting hues, communicating nuance instantly.
 * **Counterfactual Engine**: Users can dynamically scrub scenario parameters (e.g., Applicant Income) and see sub-100ms optimistic UI updates predicting how the AI will react, establishing an intuitive mental model.
-* **Implicit Trust Engine**: Synthesizes interaction time, slider activity, and final outcomes. If a user blindly approves a high-risk scenario in less than 3 seconds without investigating, the UI penalizes them visually and forces them to reconsider.
+* **Implicit Trust Tracking & Telemetry**: Synthesizes interaction time, slider activity, and final outcomes across rounds. It detects behavioral shifts (e.g., slipping into "Over-Reliant" behavior) and adapts the interface to force friction.
 * **Street Fight Mode**: Replaces the generic "Submit" button with explicit outcome tracking. If the user contradicts the AI's prediction, the interface morphs into an adversarial challenge form, deploying progressive friction and forcing the user to tag data-gaps or write free text justifying their override.
+* **End-of-Session Analytics**: At the completion of an experiment, a beautiful dashboard (using Recharts) visualizes decision accuracy, temporal trust trends, and a comprehensive timeline of every interaction. 
 
 ---
 
@@ -30,8 +32,9 @@ TrustLab separates the frontend interaction layer from the LLM proxy to ensure s
 graph TD
     subgraph Frontend [Next.js Client]
         UI[Counterfactual Engine UI]
-        TE[TrustEngine context]
+        TE[TrustEngine & ScenarioProvider]
         SF[Street Fight Mode UI]
+        DB[Session Analytics Summary]
     end
 
     subgraph Backend [FastAPI Proxy & Telemetry]
@@ -41,7 +44,7 @@ graph TD
     end
 
     subgraph Persistence layer [Future state]
-        DB[(Analytical Database sqlite/postgres)]
+        Data[(Analytical Database sqlite/postgres)]
     end
 
     UI -->|1. Scrub Slider Params| TE
@@ -51,9 +54,10 @@ graph TD
     
     UI -->|5. User clashes with AI| SF
     SF -->|6. Submits Challenge Payload| TL
-    TE -->|Sends interaction logs| TL
+    TE -->|Sends explicit & implicit logs| TL
+    UI -->|Progresses Scenarios| DB
     
-    TL -.->|7. Persist Event Stream| DB
+    TL -.->|7. Persist Event Stream| Data
 ```
 
 ---
@@ -62,7 +66,12 @@ graph TD
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ScenarioLoaded
+    [*] --> ModeSelection
+    
+    ModeSelection --> ExperimentMode
+    ModeSelection --> PlaygroundMode
+    
+    ExperimentMode --> ScenarioLoaded
     
     ScenarioLoaded --> Probing: User scrubs sliders
     Probing --> OptimisticUI: Frontend predicts
@@ -81,8 +90,11 @@ stateDiagram-v2
         ProgressiveFriction --> ChallengeSatisfied: User adds tags/reasoning
     }
     
-    NormalSubmit --> [*]: Record Telemetry
-    ChallengeSatisfied --> [*]: Force Override & Logging
+    NormalSubmit --> NextScenario: Record Telemetry
+    ChallengeSatisfied --> NextScenario: Force Override & Logging
+    
+    NextScenario --> ScenarioLoaded: More Scenarios Left
+    NextScenario --> EndOfSessionAnalytics: 10 Scenarios Complete
 ```
 
 ---
@@ -92,6 +104,7 @@ stateDiagram-v2
 ### Frontend
 - **Framework**: [Next.js](https://nextjs.org/) (React)
 - **Animation**: [Framer Motion](https://www.framer.com/motion/) (Crucial for Epistemic Orb & state transitions)
+- **Charting**: [Recharts](https://recharts.org/) (For End-of-Session Dashboard)
 - **Styling**: Tailwind CSS (Lucide-React for iconography)
 
 ### Backend
@@ -137,13 +150,13 @@ npm run dev
 ```
 
 ### 3. Open the Dashboard
-Navigate to `http://localhost:3000` in your browser. Move the interaction slider to watch the Epistemic Orb dynamically degrade/strengthen its confidence state, and try clicking "Approve/Reject" against the algorithm's advice to see Street Fight mode in action.
+Navigate to `http://localhost:3000` in your browser. Choose **Experiment Mode** to run through the 10 scenario tests, interact with the counterfactual sliders, challenge the AI via Street Fight Mode, and review your final trust calibration analytics.
 
 ---
 
 ## 📊 Telemetry Payloads
 
-TrustLab is built for academic user-studies. Every distinct action (slider tweaks, form time, explicit clashes) is shipped to the backend using standard JSON structures spanning exactly to the `TrustEvent` schema.
+TrustLab is built for academic user-studies. Every distinct action (slider tweaks, form time, explicit clashes, scenario progressions) is shipped to the backend using standard JSON structures spanning exactly to the `TrustEvent` schema.
 
 ```json
 {

@@ -24,7 +24,9 @@ export type TrustState =
   | "OVER_RELIANT"
   | "UNDER_RELIANT";
 
-interface TrustRound {
+export type TrustTrend = "improving" | "declining" | "stable" | "unknown";
+
+export interface TrustRound {
   roundIndex: number;
   trustState: TrustState;
   timeSpentMs: number;
@@ -44,6 +46,8 @@ interface TrustEngineContextValue {
   trustHistory: TrustRound[];
   /** Whether the explicit rating modal is currently shown. */
   showRatingModal: boolean;
+  /** Current trust trend based on recent rounds. */
+  trustTrend: TrustTrend;
   /** Record a user interaction (slider adjustment, etc). */
   recordInteraction: () => void;
   /** Submit the user's decision for this round — triggers trust calculation. */
@@ -52,6 +56,8 @@ interface TrustEngineContextValue {
   submitExplicitRating: (rating: number) => void;
   /** Increment the override counter (called from Street Fight Mode). */
   incrementOverride: () => void;
+  /** Reset per-round counters for a new scenario (keeps history). */
+  resetForNewRound: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +91,74 @@ const OVERRIDE_STORAGE_KEY = "trustlab_override_attempts";
 const OVER_RELIANT_TIME_MS = 3000;
 const UNDER_RELIANT_TIME_MS = 15000;
 const UNDER_RELIANT_MIN_INTERACTIONS = 5;
+
+// ---------------------------------------------------------------------------
+// Trust Trend Calculator
+// ---------------------------------------------------------------------------
+
+function calculateTrustTrend(history: TrustRound[]): TrustTrend {
+  if (history.length < 2) return "unknown";
+
+  const recent = history.slice(-3);
+  const stateValues: Record<TrustState, number> = {
+    UNKNOWN: 0,
+    UNDER_RELIANT: 1,
+    CALIBRATED: 2,
+    OVER_RELIANT: 1, // Over-reliant is also bad, treat same as under
+  };
+
+  // Calculate if trending toward CALIBRATED or away
+  const scores = recent.map((r) => stateValues[r.trustState]);
+  const lastScore = scores[scores.length - 1];
+  const firstScore = scores[0];
+
+  if (lastScore > firstScore) return "improving";
+  if (lastScore < firstScore) return "declining";
+
+  // Check if stable at calibrated or stable at problematic
+  const allCalibrated = recent.every((r) => r.trustState === "CALIBRATED");
+  if (allCalibrated) return "stable";
+
+  return "stable";
+}
+
+// ---------------------------------------------------------------------------
+// Transition Detector
+// ---------------------------------------------------------------------------
+
+function detectTransitions(
+  history: TrustRound[],
+  participantId: string
+): void {
+  if (history.length < 2) return;
+
+  const current = history[history.length - 1];
+  const previous = history[history.length - 2];
+
+  // Log transition events
+  if (previous.trustState !== current.trustState) {
+    trackTrustEvent(participantId, "trust_transition", {
+      from: previous.trustState,
+      to: current.trustState,
+      round_index: current.roundIndex,
+    });
+  }
+
+  // Detect sustained patterns (3+ consecutive same state)
+  if (history.length >= 3) {
+    const last3 = history.slice(-3);
+    const allSameState = last3.every(
+      (r) => r.trustState === last3[0].trustState
+    );
+    if (allSameState && last3[0].trustState !== "UNKNOWN") {
+      trackTrustEvent(participantId, "sustained_trust_pattern", {
+        trust_state: last3[0].trustState,
+        consecutive_rounds: 3,
+        round_index: current.roundIndex,
+      });
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -204,6 +278,9 @@ export default function TrustEngineProvider({
       major_shift: isMajorShift,
     });
 
+    // Detect transitions and sustained patterns
+    detectTransitions(updatedHistory, participantId);
+
     // Trigger explicit rating modal on major shifts
     if (isMajorShift) {
       setShowRatingModal(true);
@@ -211,7 +288,7 @@ export default function TrustEngineProvider({
 
     // Reset for next round
     resetRound();
-  }, [interactionCount, trustState, trustHistory, participantId, resetRound]);
+  }, [interactionCount, trustState, trustHistory, participantId, resetRound, overrideAttempts]);
 
   // ------------------------------------------------------------------
   // submitExplicitRating — user responds to the 1-5 trust rating modal
@@ -244,6 +321,22 @@ export default function TrustEngineProvider({
   }, []);
 
   // ------------------------------------------------------------------
+  // resetForNewRound — resets per-round state without clearing history
+  // ------------------------------------------------------------------
+  const resetForNewRound = useCallback(() => {
+    roundStartRef.current = Date.now();
+    setInteractionCount(0);
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Trust trend (derived)
+  // ------------------------------------------------------------------
+  const trustTrend = useMemo(
+    () => calculateTrustTrend(trustHistory),
+    [trustHistory]
+  );
+
+  // ------------------------------------------------------------------
   // Context value
   // ------------------------------------------------------------------
   const value = useMemo<TrustEngineContextValue>(
@@ -253,10 +346,12 @@ export default function TrustEngineProvider({
       overrideAttempts,
       trustHistory,
       showRatingModal,
+      trustTrend,
       recordInteraction,
       submitDecision,
       submitExplicitRating,
       incrementOverride,
+      resetForNewRound,
     }),
     [
       trustState,
@@ -264,10 +359,12 @@ export default function TrustEngineProvider({
       overrideAttempts,
       trustHistory,
       showRatingModal,
+      trustTrend,
       recordInteraction,
       submitDecision,
       submitExplicitRating,
       incrementOverride,
+      resetForNewRound,
     ]
   );
 
