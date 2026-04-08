@@ -111,17 +111,21 @@ async def proxy_predict(request_body: dict[str, Any]) -> AIProxyResponse:
     """
     # --- Mock strategy (Wizard-of-Oz) for Phase 1 ---
     try:
-        # Calculate a dynamic confidence based on the incoming income to make the mock feel alive
+        # Calculate a dynamic probability of approval based on the incoming income
         income = request_body.get("income", 55)
-        raw_confidence = 0.73 + ((income - 55) * 0.005)
-        confidence = max(0.05, min(0.99, raw_confidence))
-        ambiguity_flag = confidence < 0.55
+        p_approve = 0.73 + ((income - 55) * 0.005)
+        p_approve = max(0.01, min(0.99, p_approve))
+        
+        is_approve = p_approve >= 0.50
+        final_prediction = "Approve with conditions" if is_approve else "Reject application"
+        final_confidence = p_approve if is_approve else (1.0 - p_approve)
+        ambiguity_flag = final_confidence < 0.60
 
         mock_response = AIProxyResponse(
             scenario_id=request_body.get("scenario_id", "demo-scenario-001"),
-            prediction="Approve with conditions" if confidence >= 0.50 else "Reject",
+            prediction=final_prediction,
             epistemic_state=EpistemicState(
-                confidence=confidence,
+                confidence=final_confidence,
                 ambiguity_flag=ambiguity_flag,
                 reasoning=[
                     f"Applicant income adjusted to ${income}k.",

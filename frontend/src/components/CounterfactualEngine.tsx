@@ -302,13 +302,14 @@ export default function CounterfactualEngine({
   // ------------------------------------------------------------------
   // Optimistic confidence calculation (synchronous, <1ms)
   // ------------------------------------------------------------------
-  const computeOptimisticConfidence = useCallback(
+  const computeOptimisticPApprove = useCallback(
     (currentIncome: number) => {
       const delta = currentIncome - baseIncome;
-      const raw = initConfidence + delta * EXTRAPOLATION_FACTOR;
-      return Math.max(0.05, Math.min(0.99, raw));
+      const initPApprove = initPrediction.toLowerCase().includes("approve") ? initConfidence : 1 - initConfidence;
+      const raw = initPApprove + delta * EXTRAPOLATION_FACTOR;
+      return Math.max(0.01, Math.min(0.99, raw));
     },
-    [baseIncome, initConfidence],
+    [baseIncome, initConfidence, initPrediction],
   );
 
   // ------------------------------------------------------------------
@@ -322,9 +323,13 @@ export default function CounterfactualEngine({
       recordInteraction();
 
       // INSTANT: optimistic confidence update (sub-1ms)
-      const optimistic = computeOptimisticConfidence(value);
-      setConfidence(optimistic);
-      setAmbiguity(optimistic < BASE_AMBIGUITY_THRESHOLD);
+      const optPApprove = computeOptimisticPApprove(value);
+      const isApprove = optPApprove >= 0.5;
+      const optConfidence = isApprove ? optPApprove : 1 - optPApprove;
+      
+      setConfidence(optConfidence);
+      setPrediction(isApprove ? "Approve with conditions" : "Reject application");
+      setAmbiguity(optConfidence < BASE_AMBIGUITY_THRESHOLD);
 
       // DEBOUNCED: real backend fetch + telemetry
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -335,7 +340,7 @@ export default function CounterfactualEngine({
         trackTrustEvent(participantId, "slider_adjust", {
           parameter: "income",
           value,
-          optimistic_confidence: optimistic,
+          optimistic_confidence: optConfidence,
           delta_from_base: value - baseIncome,
           scenario_id: scenarioId,
         });
@@ -369,7 +374,7 @@ export default function CounterfactualEngine({
       }, DEBOUNCE_MS);
     },
     [
-      computeOptimisticConfidence,
+      computeOptimisticPApprove,
       participantId,
       recordInteraction,
       baseIncome,
@@ -481,7 +486,7 @@ export default function CounterfactualEngine({
         {/* Epistemic Orb — the visual center */}
         <EpistemicOrb
           confidence={
-            isOverReliant ? Math.max(0.3, confidence * 0.7) : confidence
+            isOverReliant ? Math.max(0.51, confidence * 0.7) : confidence
           }
           ambiguity={isOverReliant ? true : ambiguity}
           reasoning={reasoning}
