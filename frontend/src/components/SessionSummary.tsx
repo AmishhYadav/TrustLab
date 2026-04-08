@@ -146,7 +146,6 @@ export default function SessionSummary() {
         scenario_id: s.scenario_id,
         profile: s.profile,
         ai_prediction: s.ai_prediction,
-        confidence: s.confidence,
         ground_truth: s.ground_truth,
       })),
     };

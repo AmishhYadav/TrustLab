@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sliders,
-  Zap,
   ArrowRight,
   ShieldAlert,
   Swords,
@@ -44,22 +43,18 @@ interface ProxyResponse {
 const PROXY_URL = "http://localhost:8000/api/proxy/predict";
 const DEBOUNCE_MS = 300;
 
-// Local extrapolation factor — maps slider delta to confidence shift.
-const EXTRAPOLATION_FACTOR = 0.005;
-
 // Default playground scenario
 const PLAYGROUND_DEFAULTS = {
   id: "playground-001",
-  title: "Playground Mode",
+  title: "Loan Application Sandbox",
   description:
-    "Explore freely — adjust applicant data and observe AI behavior.",
+    "Build a hypothetical applicant profile and see how the AI\u2019s credit risk model responds in real time.",
   baseIncome: 55,
   baseCreditScore: 680,
   baseEmploymentLength: 3,
+  baseDebtToIncome: 0.30,
+  baseLoanAmount: 50,
 };
-
-const BASE_CONFIDENCE = 0.73;
-const BASE_AMBIGUITY_THRESHOLD = 0.70;
 
 const CHALLENGE_TAGS = [
   "Missed context",
@@ -83,6 +78,7 @@ interface CounterfactualEngineProps {
   ) => void;
 }
 
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -105,6 +101,9 @@ export default function CounterfactualEngine({
   // Force ambiguity when user is over-reliant (adaptive UX)
   const isOverReliant = trustState === "OVER_RELIANT";
 
+  // ── Loading state for initial ML fetch ──────────────────────────────
+  const [isLoadingPrediction, setIsLoadingPrediction] = useState(false);
+
   // ── Scenario-driven state ────────────────────────────────────────────
   const scenarioId = scenario?.scenario_id ?? PLAYGROUND_DEFAULTS.id;
   const scenarioTitle = scenario?.title ?? PLAYGROUND_DEFAULTS.title;
@@ -122,25 +121,20 @@ export default function CounterfactualEngine({
     scenario?.input_features?.employment_length ??
       PLAYGROUND_DEFAULTS.baseEmploymentLength,
   );
+  const [debtToIncome, setDebtToIncome] = useState(
+    scenario?.input_features?.debt_to_income ??
+      PLAYGROUND_DEFAULTS.baseDebtToIncome,
+  );
+  const [loanAmount, setLoanAmount] = useState(
+    scenario?.input_features?.loan_amount ??
+      PLAYGROUND_DEFAULTS.baseLoanAmount,
+  );
 
-  // Epistemic state — driven by scenario or optimistic local computation
-  const initConfidence = scenario?.confidence ?? BASE_CONFIDENCE;
-  const initAmbiguity = scenario?.ambiguity_flag ?? true;
-  const initPrediction = scenario
-    ? scenario.ai_prediction === "approve"
-      ? "Approve with conditions"
-      : "Reject application"
-    : "Approve with conditions";
-  const initReasoning = scenario?.reasoning ?? [
-    "Applicant income-to-debt ratio is within acceptable range.",
-    "Credit history shows two late payments in the last 24 months.",
-    "Employment tenure is short (< 1 year) — moderate risk factor.",
-  ];
-
-  const [confidence, setConfidence] = useState(initConfidence);
-  const [ambiguity, setAmbiguity] = useState(initAmbiguity);
-  const [prediction, setPrediction] = useState(initPrediction);
-  const [reasoning, setReasoning] = useState<string[]>(initReasoning);
+  // Epistemic state — populated after ML fetch
+  const [confidence, setConfidence] = useState<number | null>(null);
+  const [ambiguity, setAmbiguity] = useState(false);
+  const [prediction, setPrediction] = useState("");
+  const [reasoning, setReasoning] = useState<string[]>([]);
 
   // Track whether we're waiting for backend
   const [isSyncing, setIsSyncing] = useState(false);
@@ -168,14 +162,15 @@ export default function CounterfactualEngine({
     setIncome(scenario.input_features.income);
     setCreditScore(scenario.input_features.credit_score);
     setEmploymentLength(scenario.input_features.employment_length);
-    setConfidence(scenario.confidence);
-    setAmbiguity(scenario.ambiguity_flag);
-    setPrediction(
-      scenario.ai_prediction === "approve"
-        ? "Approve with conditions"
-        : "Reject application",
-    );
-    setReasoning(scenario.reasoning);
+    setDebtToIncome(scenario.input_features.debt_to_income);
+    setLoanAmount(scenario.input_features.loan_amount);
+
+    // Reset epistemic state — will be populated by ML fetch
+    setConfidence(null);
+    setAmbiguity(false);
+    setPrediction("");
+    setReasoning([]);
+
     setIsChallenging(false);
     setUserDecision("");
     setReasoningText("");
@@ -184,7 +179,60 @@ export default function CounterfactualEngine({
     roundStartRef.current = Date.now();
     resetForNewRound();
     setScenarioKey(scenario.scenario_id);
+
+    // Scroll to top on scenario change
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }, [scenario, resetForNewRound]);
+
+  // ── Fetch ML prediction on mount and scenario change ──────────────────
+  useEffect(() => {
+    const fetchInitial = async () => {
+      setIsLoadingPrediction(true);
+      try {
+        const res = await fetch(PROXY_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scenario_id: scenarioId,
+            income: baseIncome,
+            credit_score: scenario?.input_features?.credit_score ?? PLAYGROUND_DEFAULTS.baseCreditScore,
+            employment_length: scenario?.input_features?.employment_length ?? PLAYGROUND_DEFAULTS.baseEmploymentLength,
+            debt_to_income: scenario?.input_features?.debt_to_income ?? PLAYGROUND_DEFAULTS.baseDebtToIncome,
+            loan_amount: scenario?.input_features?.loan_amount ?? PLAYGROUND_DEFAULTS.baseLoanAmount,
+          }),
+        });
+        if (res.ok) {
+          const data: ProxyResponse = await res.json();
+          setConfidence(data.epistemic_state.confidence);
+          setAmbiguity(data.epistemic_state.ambiguity_flag);
+          setPrediction(data.prediction);
+          setReasoning(data.epistemic_state.reasoning);
+        }
+      } catch {
+        // Fallback: derive what we can from scenario, rest are defaults
+        if (scenario) {
+          setConfidence(0.50);
+          setAmbiguity(true);
+          setPrediction(
+            scenario.ai_prediction === "approve"
+              ? "Approve with conditions"
+              : "Reject application",
+          );
+          setReasoning(["Unable to reach ML model — showing default prediction."]);
+        } else {
+          setConfidence(0.73);
+          setPrediction("Approve with conditions");
+          setReasoning(["Analyzing applicant data..."]);
+        }
+      } finally {
+        setIsLoadingPrediction(false);
+      }
+    };
+
+    fetchInitial();
+  }, [scenarioId, baseIncome, scenario]);
+
+
 
   // ------------------------------------------------------------------
   // Progressive friction messages based on override attempts
@@ -300,36 +348,28 @@ export default function CounterfactualEngine({
     reasoningText.trim().length > 0 || selectedTags.length > 0;
 
   // ------------------------------------------------------------------
-  // Optimistic confidence calculation (synchronous, <1ms)
-  // ------------------------------------------------------------------
-  const computeOptimisticPApprove = useCallback(
-    (currentIncome: number) => {
-      const delta = currentIncome - baseIncome;
-      const initPApprove = initPrediction.toLowerCase().includes("approve") ? initConfidence : 1 - initConfidence;
-      const raw = initPApprove + delta * EXTRAPOLATION_FACTOR;
-      return Math.max(0.01, Math.min(0.99, raw));
-    },
-    [baseIncome, initConfidence, initPrediction],
-  );
-
-  // ------------------------------------------------------------------
   // Slider change handler — instant local update + debounced fetch
   // ------------------------------------------------------------------
-  const handleIncomeChange = useCallback(
-    (value: number) => {
-      setIncome(value);
+  const handleSliderChange = useCallback(
+    (parameter: string, value: number) => {
+      // Update local state
+      if (parameter === "income") setIncome(value);
+      else if (parameter === "credit_score") setCreditScore(value);
+      else if (parameter === "employment_length") setEmploymentLength(value);
+      else if (parameter === "debt_to_income") setDebtToIncome(value);
+      else if (parameter === "loan_amount") setLoanAmount(value);
 
       // Record interaction for trust tracking
       recordInteraction();
 
-      // INSTANT: optimistic confidence update (sub-1ms)
-      const optPApprove = computeOptimisticPApprove(value);
-      const isApprove = optPApprove >= 0.5;
-      const optConfidence = isApprove ? optPApprove : 1 - optPApprove;
-      
-      setConfidence(optConfidence);
-      setPrediction(isApprove ? "Approve with conditions" : "Reject application");
-      setAmbiguity(optConfidence < BASE_AMBIGUITY_THRESHOLD);
+      // Get current feature values for the fetch
+      const currentFeatures = {
+        income: parameter === "income" ? value : income,
+        credit_score: parameter === "credit_score" ? value : creditScore,
+        employment_length: parameter === "employment_length" ? value : employmentLength,
+        debt_to_income: parameter === "debt_to_income" ? value : debtToIncome,
+        loan_amount: parameter === "loan_amount" ? value : loanAmount,
+      };
 
       // DEBOUNCED: real backend fetch + telemetry
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -338,10 +378,8 @@ export default function CounterfactualEngine({
 
         // Fire telemetry
         trackTrustEvent(participantId, "slider_adjust", {
-          parameter: "income",
+          parameter,
           value,
-          optimistic_confidence: optConfidence,
-          delta_from_base: value - baseIncome,
           scenario_id: scenarioId,
         });
 
@@ -352,11 +390,7 @@ export default function CounterfactualEngine({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               scenario_id: scenarioId,
-              income: value,
-              credit_score: creditScore,
-              employment_length: employmentLength,
-              debt_to_income: scenario?.input_features?.debt_to_income ?? 0.30,
-              loan_amount: scenario?.input_features?.loan_amount ?? 50,
+              ...currentFeatures,
             }),
           });
 
@@ -368,9 +402,9 @@ export default function CounterfactualEngine({
             setReasoning(data.epistemic_state.reasoning);
           }
         } catch {
-          // Network failure — keep optimistic values
+          // Network failure — keep current values
           console.warn(
-            "[CounterfactualEngine] proxy fetch failed, keeping optimistic state",
+            "[CounterfactualEngine] proxy fetch failed, keeping current state",
           );
         } finally {
           setIsSyncing(false);
@@ -378,39 +412,15 @@ export default function CounterfactualEngine({
       }, DEBOUNCE_MS);
     },
     [
-      computeOptimisticPApprove,
+      income,
+      creditScore,
+      employmentLength,
+      debtToIncome,
+      loanAmount,
       participantId,
       recordInteraction,
-      baseIncome,
       scenarioId,
     ],
-  );
-
-  // Playground-only slider handlers (no backend, just telemetry)
-  const handleCreditScoreChange = useCallback(
-    (value: number) => {
-      setCreditScore(value);
-      recordInteraction();
-      trackTrustEvent(participantId, "slider_adjust", {
-        parameter: "credit_score",
-        value,
-        scenario_id: scenarioId,
-      });
-    },
-    [participantId, recordInteraction, scenarioId],
-  );
-
-  const handleEmploymentChange = useCallback(
-    (value: number) => {
-      setEmploymentLength(value);
-      recordInteraction();
-      trackTrustEvent(participantId, "slider_adjust", {
-        parameter: "employment_length",
-        value,
-        scenario_id: scenarioId,
-      });
-    },
-    [participantId, recordInteraction, scenarioId],
   );
 
   // Cleanup timeout on unmount
@@ -420,6 +430,9 @@ export default function CounterfactualEngine({
     };
   }, []);
 
+  // Whether we have data to show
+  const hasData = confidence !== null && !isLoadingPrediction;
+
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -428,7 +441,7 @@ export default function CounterfactualEngine({
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
         transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-        className="flex flex-col items-center gap-10 w-full max-w-2xl mx-auto"
+        className="flex flex-col items-center gap-8 w-full max-w-2xl mx-auto"
       >
         {/* Scenario Header */}
         <motion.div
@@ -454,7 +467,7 @@ export default function CounterfactualEngine({
             {scenarioDescription}
           </p>
 
-          {/* Input features summary (experiment mode) */}
+          {/* Input features summary */}
           {scenario && (
             <div className="flex flex-wrap items-center justify-center gap-3 mt-3">
               {[
@@ -487,313 +500,366 @@ export default function CounterfactualEngine({
           )}
         </motion.div>
 
-        {/* Epistemic Orb — the visual center */}
-        <EpistemicOrb
-          confidence={
-            isOverReliant ? Math.max(0.51, confidence * 0.7) : confidence
-          }
-          ambiguity={isOverReliant ? true : ambiguity}
-          reasoning={reasoning}
-        />
-
-        {/* Over-reliance counter-argument injection */}
-        <AnimatePresence>
-          {isOverReliant && (
+        {/* Loading indicator while ML model runs */}
+        {isLoadingPrediction && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center gap-3 py-8"
+          >
             <motion.div
-              initial={{ opacity: 0, y: -10, height: 0 }}
-              animate={{ opacity: 1, y: 0, height: "auto" }}
-              exit={{ opacity: 0, y: -10, height: 0 }}
-              className="w-full max-w-2xl"
-            >
-              <motion.div
-                animate={{ x: [0, -1, 1, -1, 0] }}
-                transition={{
-                  duration: 0.3,
-                  repeat: Infinity,
-                  repeatType: "mirror",
-                  repeatDelay: 2,
-                }}
-                className="flex items-start gap-3 rounded-xl border border-red-500/50 bg-red-950/30 backdrop-blur-sm px-5 py-4"
-              >
-                <ShieldAlert
-                  size={20}
-                  className="text-red-400 shrink-0 mt-0.5"
-                />
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-red-300">
-                    Wait — are you sure?
-                  </div>
-                  <p className="text-xs text-red-400/80 leading-relaxed">
-                    The model&apos;s training data here is very sparse. Consider
-                    exploring the counterfactual controls before deciding.
-                  </p>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Prediction display */}
-        <motion.div
-          layout
-          className="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-900/60 backdrop-blur-sm px-6 py-3"
-        >
-          <ArrowRight size={16} className="text-neutral-600" />
-          <div>
-            <div className="text-xs text-neutral-500 uppercase tracking-wider mb-0.5">
-              AI Recommendation
-            </div>
-            <div className="text-white font-medium">{prediction}</div>
-          </div>
-          {isSyncing && (
-            <motion.div
-              animate={{ opacity: [0.3, 1, 0.3] }}
-              transition={{ duration: 0.8, repeat: Infinity }}
-              className="ml-2 h-2 w-2 rounded-full bg-blue-400"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="h-8 w-8 rounded-full border-2 border-blue-500/30 border-t-blue-400"
             />
-          )}
-        </motion.div>
+            <p className="text-sm text-neutral-500">Running ML model…</p>
+          </motion.div>
+        )}
 
-        {/* Counterfactual Controls */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="w-full rounded-2xl border border-neutral-800 bg-neutral-900/40 backdrop-blur-sm p-6 space-y-5"
-        >
-          <div className="flex items-center gap-2 text-sm text-neutral-400">
-            <Sliders size={14} />
-            <span className="uppercase tracking-wider text-xs">
-              Counterfactual Controls
-            </span>
-          </div>
+        {/* ── AI Prediction Section ─────────────────────────────────── */}
+        {hasData && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            className="flex flex-col items-center gap-8 w-full"
+          >
+            {/* Epistemic Orb */}
+            <EpistemicOrb
+              confidence={
+                isOverReliant ? Math.max(0.51, confidence * 0.7) : confidence
+              }
+              ambiguity={isOverReliant ? true : ambiguity}
+              reasoning={reasoning}
+            />
 
-          {/* Income slider */}
-          <SliderControl
-            id="income-slider"
-            label="Annual Income"
-            value={income}
-            min={20}
-            max={200}
-            step={1}
-            format={(v) => `$${v}k`}
-            onChange={handleIncomeChange}
-            accentColor="emerald"
-          />
+            {/* Over-reliance counter-argument injection */}
+            <AnimatePresence>
+              {isOverReliant && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: "auto" }}
+                  exit={{ opacity: 0, y: -10, height: 0 }}
+                  className="w-full max-w-2xl"
+                >
+                  <motion.div
+                    animate={{ x: [0, -1, 1, -1, 0] }}
+                    transition={{
+                      duration: 0.3,
+                      repeat: Infinity,
+                      repeatType: "mirror",
+                      repeatDelay: 2,
+                    }}
+                    className="flex items-start gap-3 rounded-xl border border-red-500/50 bg-red-950/30 backdrop-blur-sm px-5 py-4"
+                  >
+                    <ShieldAlert
+                      size={20}
+                      className="text-red-400 shrink-0 mt-0.5"
+                    />
+                    <div className="space-y-1">
+                      <div className="text-sm font-medium text-red-300">
+                        Wait — are you sure?
+                      </div>
+                      <p className="text-xs text-red-400/80 leading-relaxed">
+                        The model&apos;s training data here is very sparse. Consider
+                        exploring the counterfactual controls before deciding.
+                      </p>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          {/* Playground-only extra sliders */}
-          {mode === "playground" && (
-            <>
-              <SliderControl
-                id="credit-slider"
-                label="Credit Score"
-                value={creditScore}
-                min={300}
-                max={850}
-                step={5}
-                format={(v) => v.toString()}
-                onChange={handleCreditScoreChange}
-                accentColor="blue"
-              />
-              <SliderControl
-                id="employment-slider"
-                label="Employment Length"
-                value={employmentLength}
-                min={0}
-                max={30}
-                step={1}
-                format={(v) => `${v} yrs`}
-                onChange={handleEmploymentChange}
-                accentColor="purple"
-              />
-            </>
-          )}
-
-          {/* Info text */}
-          <p className="text-xs text-neutral-600 text-center pt-2">
-            {mode === "experiment"
-              ? "Drag the slider to explore how changing the applicant\u2019s income affects the AI\u2019s confidence."
-              : "Adjust any parameter to explore how the AI\u2019s confidence and recommendation change."}
-          </p>
-        </motion.div>
-
-        {/* Decision outcome buttons OR Street Fight Mode OR Confirmation */}
-        <AnimatePresence mode="wait">
-          {showConfirmation ? (
+            {/* Prediction display */}
             <motion.div
-              key="confirmation"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="flex flex-col items-center gap-3 py-4"
+              layout
+              className="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-900/60 backdrop-blur-sm px-6 py-3"
             >
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", damping: 12, stiffness: 200 }}
-                className="h-12 w-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center"
-              >
-                <CheckCircle size={24} className="text-emerald-400" />
-              </motion.div>
-              <p className="text-sm font-medium text-emerald-300">
-                ✔ Decision recorded
-              </p>
-              {mode === "experiment" && (
-                <p className="text-xs text-neutral-500">
-                  Moving to next scenario…
-                </p>
+              <ArrowRight size={16} className="text-neutral-600" />
+              <div>
+                <div className="text-xs text-neutral-500 uppercase tracking-wider mb-0.5">
+                  AI Recommendation
+                </div>
+                <div className="text-white font-medium">{prediction}</div>
+              </div>
+              {isSyncing && (
+                <motion.div
+                  animate={{ opacity: [0.3, 1, 0.3] }}
+                  transition={{ duration: 0.8, repeat: Infinity }}
+                  className="ml-2 h-2 w-2 rounded-full bg-blue-400"
+                />
               )}
             </motion.div>
-          ) : !isChallenging ? (
-            <motion.div
-              key="outcome-buttons"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ delay: 0.5 }}
-              className="flex items-center gap-4 w-full max-w-md"
-            >
-              <motion.button
-                whileHover={{ scale: 1.03, y: -1 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => handleOutcomeSelection("approve")}
-                className="flex-1 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-emerald-300 transition-all duration-200 hover:border-emerald-400/50 hover:from-emerald-600/30 hover:to-emerald-500/20 hover:text-emerald-200 hover:shadow-[0_0_20px_rgba(16,185,129,0.15)] focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <CheckCircle size={16} />
-                  Approve Loan
-                </span>
-              </motion.button>
+          </motion.div>
+        )}
 
-              <motion.button
-                whileHover={{ scale: 1.03, y: -1 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => handleOutcomeSelection("reject")}
-                className="flex-1 rounded-xl border border-red-500/30 bg-gradient-to-r from-red-600/20 to-red-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-red-300 transition-all duration-200 hover:border-red-400/50 hover:from-red-600/30 hover:to-red-500/20 hover:text-red-200 hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] focus:outline-none focus:ring-2 focus:ring-red-400/30"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  <XCircle size={16} />
-                  Reject Loan
-                </span>
-              </motion.button>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="street-fight"
-              initial={{ opacity: 0, y: 20, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
-              transition={{ type: "spring", damping: 22, stiffness: 260 }}
-              className="w-full max-w-2xl rounded-2xl border border-amber-500/40 bg-gradient-to-b from-amber-950/30 to-neutral-900/80 backdrop-blur-xl p-6 space-y-5"
-            >
-              {/* Header */}
-              <div className="flex items-center gap-3">
-                <motion.div
-                  animate={{ rotate: [0, -8, 8, -4, 0] }}
-                  transition={{
-                    duration: 0.6,
-                    repeat: Infinity,
-                    repeatDelay: 3,
-                  }}
-                >
-                  <Swords size={22} className="text-amber-400" />
-                </motion.div>
-                <div>
-                  <h3 className="text-base font-semibold text-amber-200">
-                    Street Fight Mode
-                  </h3>
-                  <p className="text-xs text-amber-400/70">
-                    You chose:{" "}
-                    <span className="font-medium text-white">
-                      {userDecision}
-                    </span>{" "}
-                    — AI recommended:{" "}
-                    <span className="font-medium text-white">{prediction}</span>
-                  </p>
-                </div>
-              </div>
+        {/* Counterfactual Controls */}
+        {hasData && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="w-full rounded-2xl border border-neutral-800 bg-neutral-900/40 backdrop-blur-sm p-6 space-y-5"
+          >
+            <div className="flex items-center gap-2 text-sm text-neutral-400">
+              <Sliders size={14} />
+              <span className="uppercase tracking-wider text-xs">
+                Counterfactual Controls
+              </span>
+            </div>
 
-              {/* Progressive friction warning */}
-              <motion.div
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${
-                  overrideAttempts > 1
-                    ? "border-red-500/50 bg-red-950/40 text-red-300"
-                    : overrideAttempts === 1
-                      ? "border-orange-500/50 bg-orange-950/30 text-orange-300"
-                      : "border-amber-500/40 bg-amber-950/20 text-amber-300"
-                }`}
-              >
-                {getFrictionMessage()}
-              </motion.div>
+            {/* Income slider */}
+            <SliderControl
+              id="income-slider"
+              label="Annual Income"
+              value={income}
+              min={20}
+              max={200}
+              step={1}
+              format={(v) => `$${v}k`}
+              onChange={(v) => handleSliderChange("income", v)}
+              accentColor="emerald"
+            />
 
-              {/* Quick tags */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-neutral-500 uppercase tracking-wider">
-                  <Tag size={12} />
-                  Quick Tags
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {CHALLENGE_TAGS.map((tag) => {
-                    const isSelected = selectedTags.includes(tag);
-                    return (
-                      <motion.button
-                        key={tag}
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={() => toggleTag(tag)}
-                        className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150 ${
-                          isSelected
-                            ? "border-amber-400 bg-amber-400/20 text-amber-200"
-                            : "border-neutral-700 bg-neutral-800/60 text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
-                        }`}
-                      >
-                        {tag}
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              </div>
+            {/* Credit Score slider */}
+            <SliderControl
+              id="credit-slider"
+              label="Credit Score"
+              value={creditScore}
+              min={300}
+              max={850}
+              step={5}
+              format={(v) => v.toString()}
+              onChange={(v) => handleSliderChange("credit_score", v)}
+              accentColor="blue"
+            />
 
-              {/* Free-text reasoning */}
-              <div className="space-y-2">
-                <label
-                  htmlFor="reasoning-text"
-                  className="block text-xs text-neutral-500 uppercase tracking-wider"
-                >
-                  Your reasoning
-                </label>
-                <textarea
-                  id="reasoning-text"
-                  value={reasoningText}
-                  onChange={(e) => setReasoningText(e.target.value)}
-                  placeholder="Explain why you disagree with the AI\u2019s recommendation\u2026"
-                  rows={3}
-                  className="w-full rounded-xl border border-neutral-700 bg-neutral-800/60 px-4 py-3 text-sm text-white placeholder-neutral-600 backdrop-blur-sm transition-colors duration-150 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-400/20 resize-none"
+            {/* Employment Length slider */}
+            <SliderControl
+              id="employment-slider"
+              label="Employment Length"
+              value={employmentLength}
+              min={0}
+              max={30}
+              step={1}
+              format={(v) => `${v} yrs`}
+              onChange={(v) => handleSliderChange("employment_length", v)}
+              accentColor="purple"
+            />
+
+            {/* Playground-only: DTI and Loan Amount sliders */}
+            {mode === "playground" && (
+              <>
+                <SliderControl
+                  id="dti-slider"
+                  label="Debt-to-Income Ratio"
+                  value={debtToIncome}
+                  min={0.05}
+                  max={0.60}
+                  step={0.01}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => handleSliderChange("debt_to_income", v)}
+                  accentColor="purple"
                 />
-              </div>
+                <SliderControl
+                  id="loan-slider"
+                  label="Loan Amount"
+                  value={loanAmount}
+                  min={5}
+                  max={300}
+                  step={5}
+                  format={(v) => `$${v}k`}
+                  onChange={(v) => handleSliderChange("loan_amount", v)}
+                  accentColor="blue"
+                />
+              </>
+            )}
 
-              {/* Force Override button */}
-              <motion.button
-                whileHover={canForceOverride ? { scale: 1.02, y: -1 } : {}}
-                whileTap={canForceOverride ? { scale: 0.98 } : {}}
-                onClick={handleForceOverride}
-                disabled={!canForceOverride}
-                className={`w-full rounded-xl border px-6 py-3.5 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 ${
-                  canForceOverride
-                    ? "border-amber-500/40 bg-gradient-to-r from-amber-600/25 to-amber-500/15 text-amber-200 hover:border-amber-400/60 hover:from-amber-600/35 hover:to-amber-500/25 hover:text-amber-100 hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] focus:ring-amber-400/30"
-                    : "border-neutral-700 bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
-                }`}
+            <p className="text-xs text-neutral-600 text-center pt-2">
+              Adjust any parameter to explore how the AI&apos;s confidence and recommendation change.
+            </p>
+          </motion.div>
+        )}
+
+        {/* Decision outcome buttons OR Street Fight Mode OR Confirmation (experiment only) */}
+        {hasData && mode === "experiment" && (
+          <AnimatePresence mode="wait">
+            {showConfirmation ? (
+              <motion.div
+                key="confirmation"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="flex flex-col items-center gap-3 py-4"
               >
-                <span className="flex items-center justify-center gap-2">
-                  <Send size={16} />
-                  Force Override
-                </span>
-              </motion.button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", damping: 12, stiffness: 200 }}
+                  className="h-12 w-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center"
+                >
+                  <CheckCircle size={24} className="text-emerald-400" />
+                </motion.div>
+                <p className="text-sm font-medium text-emerald-300">
+                  ✔ Decision recorded
+                </p>
+                {mode === "experiment" && (
+                  <p className="text-xs text-neutral-500">
+                    Moving to next scenario…
+                  </p>
+                )}
+              </motion.div>
+            ) : !isChallenging ? (
+              <motion.div
+                key="outcome-buttons"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ delay: 0.15 }}
+                className="flex items-center gap-4 w-full max-w-md"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.03, y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => handleOutcomeSelection("approve")}
+                  className="flex-1 rounded-xl border border-emerald-500/30 bg-gradient-to-r from-emerald-600/20 to-emerald-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-emerald-300 transition-all duration-200 hover:border-emerald-400/50 hover:from-emerald-600/30 hover:to-emerald-500/20 hover:text-emerald-200 hover:shadow-[0_0_20px_rgba(16,185,129,0.15)] focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle size={16} />
+                    Approve Loan
+                  </span>
+                </motion.button>
+
+                <motion.button
+                  whileHover={{ scale: 1.03, y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => handleOutcomeSelection("reject")}
+                  className="flex-1 rounded-xl border border-red-500/30 bg-gradient-to-r from-red-600/20 to-red-500/10 backdrop-blur-sm px-5 py-3.5 text-sm font-semibold text-red-300 transition-all duration-200 hover:border-red-400/50 hover:from-red-600/30 hover:to-red-500/20 hover:text-red-200 hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] focus:outline-none focus:ring-2 focus:ring-red-400/30"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <XCircle size={16} />
+                    Reject Loan
+                  </span>
+                </motion.button>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="street-fight"
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                transition={{ type: "spring", damping: 22, stiffness: 260 }}
+                className="w-full max-w-2xl rounded-2xl border border-amber-500/40 bg-gradient-to-b from-amber-950/30 to-neutral-900/80 backdrop-blur-xl p-6 space-y-5"
+              >
+                {/* Header */}
+                <div className="flex items-center gap-3">
+                  <motion.div
+                    animate={{ rotate: [0, -8, 8, -4, 0] }}
+                    transition={{
+                      duration: 0.6,
+                      repeat: Infinity,
+                      repeatDelay: 3,
+                    }}
+                  >
+                    <Swords size={22} className="text-amber-400" />
+                  </motion.div>
+                  <div>
+                    <h3 className="text-base font-semibold text-amber-200">
+                      Street Fight Mode
+                    </h3>
+                    <p className="text-xs text-amber-400/70">
+                      You chose:{" "}
+                      <span className="font-medium text-white">
+                        {userDecision}
+                      </span>{" "}
+                      — AI recommended:{" "}
+                      <span className="font-medium text-white">{prediction}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Progressive friction warning */}
+                <motion.div
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className={`rounded-lg border px-4 py-3 text-sm leading-relaxed ${
+                    overrideAttempts > 1
+                      ? "border-red-500/50 bg-red-950/40 text-red-300"
+                      : overrideAttempts === 1
+                        ? "border-orange-500/50 bg-orange-950/30 text-orange-300"
+                        : "border-amber-500/40 bg-amber-950/20 text-amber-300"
+                  }`}
+                >
+                  {getFrictionMessage()}
+                </motion.div>
+
+                {/* Quick tags */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs text-neutral-500 uppercase tracking-wider">
+                    <Tag size={12} />
+                    Quick Tags
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {CHALLENGE_TAGS.map((tag) => {
+                      const isSelected = selectedTags.includes(tag);
+                      return (
+                        <motion.button
+                          key={tag}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => toggleTag(tag)}
+                          className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150 ${
+                            isSelected
+                              ? "border-amber-400 bg-amber-400/20 text-amber-200"
+                              : "border-neutral-700 bg-neutral-800/60 text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
+                          }`}
+                        >
+                          {tag}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Free-text reasoning */}
+                <div className="space-y-2">
+                  <label
+                    htmlFor="reasoning-text"
+                    className="block text-xs text-neutral-500 uppercase tracking-wider"
+                  >
+                    Your reasoning
+                  </label>
+                  <textarea
+                    id="reasoning-text"
+                    value={reasoningText}
+                    onChange={(e) => setReasoningText(e.target.value)}
+                    placeholder="Explain why you disagree with the AI\u2019s recommendation\u2026"
+                    rows={3}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-800/60 px-4 py-3 text-sm text-white placeholder-neutral-600 backdrop-blur-sm transition-colors duration-150 focus:border-amber-500/50 focus:outline-none focus:ring-2 focus:ring-amber-400/20 resize-none"
+                  />
+                </div>
+
+                {/* Force Override button */}
+                <motion.button
+                  whileHover={canForceOverride ? { scale: 1.02, y: -1 } : {}}
+                  whileTap={canForceOverride ? { scale: 0.98 } : {}}
+                  onClick={handleForceOverride}
+                  disabled={!canForceOverride}
+                  className={`w-full rounded-xl border px-6 py-3.5 text-sm font-semibold transition-all duration-200 focus:outline-none focus:ring-2 ${
+                    canForceOverride
+                      ? "border-amber-500/40 bg-gradient-to-r from-amber-600/25 to-amber-500/15 text-amber-200 hover:border-amber-400/60 hover:from-amber-600/35 hover:to-amber-500/25 hover:text-amber-100 hover:shadow-[0_0_20px_rgba(245,158,11,0.15)] focus:ring-amber-400/30"
+                      : "border-neutral-700 bg-neutral-800/40 text-neutral-600 cursor-not-allowed"
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <Send size={16} />
+                    Force Override
+                  </span>
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
       </motion.div>
     </AnimatePresence>
   );
