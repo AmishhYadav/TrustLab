@@ -38,7 +38,15 @@ export default function EpistemicOrb({
 
   // Warning state: amber for ambiguity
   const ambiguityColor = "#f59e0b"; // Valid hex so we can concatenate alpha like + '50' or +'10'
-  const activeColor = ambiguity ? ambiguityColor : coreColor;
+  
+  const getColor = (alphaHex?: string) => {
+    if (ambiguity) {
+      return alphaHex ? `${ambiguityColor}${alphaHex}` : ambiguityColor;
+    }
+    if (!alphaHex) return coreColor;
+    const alphaDec = parseInt(alphaHex, 16) / 255;
+    return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alphaDec.toFixed(3)})`;
+  };
 
   return (
     <div className="flex flex-col items-center gap-8 select-none">
@@ -50,7 +58,7 @@ export default function EpistemicOrb({
           style={{
             width: size + 60,
             height: size + 60,
-            background: `radial-gradient(circle, ${activeColor}15, transparent 70%)`,
+            background: `radial-gradient(circle, ${getColor("15")}, transparent 70%)`,
           }}
           animate={{
             scale: [1, pulseScale, 1],
@@ -69,7 +77,7 @@ export default function EpistemicOrb({
           style={{
             width: size + 30,
             height: size + 30,
-            background: `radial-gradient(circle, ${activeColor}25, transparent 60%)`,
+            background: `radial-gradient(circle, ${getColor("25")}, transparent 60%)`,
           }}
           animate={{
             scale: [1, pulseScale * 0.95, 1],
@@ -89,13 +97,13 @@ export default function EpistemicOrb({
           style={{
             width: size,
             height: size,
-            background: `radial-gradient(circle at 35% 35%, ${activeColor}40, ${activeColor}15 60%, transparent)`,
+            background: `radial-gradient(circle at 35% 35%, ${getColor("40")}, ${getColor("15")} 60%, transparent)`,
             boxShadow: `
-              0 0 ${20 + confidence * 40}px ${activeColor}30,
-              0 0 ${40 + confidence * 60}px ${activeColor}15,
-              inset 0 0 ${30 + confidence * 30}px ${activeColor}20
+              0 0 ${20 + confidence * 40}px ${getColor("30")},
+              0 0 ${40 + confidence * 60}px ${getColor("15")},
+              inset 0 0 ${30 + confidence * 30}px ${getColor("20")}
             `,
-            border: `1px solid ${activeColor}30`,
+            border: `1px solid ${getColor("30")}`,
           }}
           animate={
             ambiguity
@@ -129,7 +137,7 @@ export default function EpistemicOrb({
             style={{
               width: size * 0.25,
               height: size * 0.2,
-              background: `radial-gradient(ellipse, ${activeColor}50, transparent)`,
+              background: `radial-gradient(ellipse, ${getColor("50")}, transparent)`,
               filter: "blur(8px)",
             }}
           />
@@ -143,7 +151,7 @@ export default function EpistemicOrb({
         >
           <span
             className="text-3xl font-bold tabular-nums tracking-tight"
-            style={{ color: activeColor }}
+            style={{ color: getColor() }}
           >
             {Math.round(confidence * 100)}%
           </span>
@@ -194,7 +202,7 @@ export default function EpistemicOrb({
             >
               <span
                 className="mt-1 h-1.5 w-1.5 rounded-full shrink-0"
-                style={{ backgroundColor: activeColor }}
+                style={{ backgroundColor: getColor() }}
               />
               <span>{reason}</span>
             </motion.div>

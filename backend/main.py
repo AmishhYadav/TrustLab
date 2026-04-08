@@ -6,6 +6,7 @@ Model-agnostic proxy + telemetry ingestion for Human–AI trust calibration stud
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -19,16 +20,40 @@ from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
 from database import init_db, get_or_create_user, insert_event
+import ml_engine
+import llm_engine
+
+# Active prediction strategy: "mock" | "ml" | "llm"
+STRATEGY = os.environ.get("TRUSTLAB_STRATEGY", "ml")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+
+    # Load ML model for "ml" and "llm" strategies
+    if STRATEGY in ("ml", "llm"):
+        try:
+            ml_engine.load_model()
+            logger.info("ML model loaded successfully (strategy=%s)", STRATEGY)
+        except FileNotFoundError as e:
+            logger.error("ML model not found: %s", e)
+            logger.error("Run: python generate_dataset.py && python train_model.py")
+
+    # Initialize LLM client for "llm" strategy
+    if STRATEGY == "llm":
+        llm_available = llm_engine.init_client()
+        if not llm_available:
+            logger.warning(
+                "LLM client unavailable — will fall back to template reasoning"
+            )
+
+    logger.info("TrustLab API started (strategy=%s)", STRATEGY)
     yield
 
 app = FastAPI(
     title="TrustLab API",
     description="Model-agnostic proxy and telemetry service for trust calibration research.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -140,39 +165,145 @@ async def post_telemetry(event: TrustEvent) -> dict[str, str]:
 async def proxy_predict(request_body: dict[str, Any]) -> AIProxyResponse:
     """
     Model-agnostic prediction proxy.
-    Accepts any JSON payload, runs it through the active strategy (mock or live),
-    and returns a strictly-validated AIProxyResponse.
+    Routes to the active strategy (mock, ml, or llm) and returns
+    a strictly-validated AIProxyResponse.
     """
-    # --- Mock strategy (Wizard-of-Oz) for Phase 1 ---
+    scenario_id = request_body.get("scenario_id", "demo-scenario-001")
+
     try:
-        # Calculate a dynamic probability of approval based on the incoming income
-        income = request_body.get("income", 55)
-        p_approve = 0.73 + ((income - 55) * 0.005)
-        p_approve = max(0.01, min(0.99, p_approve))
-        
-        is_approve = p_approve >= 0.50
-        final_prediction = "Approve with conditions" if is_approve else "Reject application"
-        final_confidence = p_approve if is_approve else (1.0 - p_approve)
-        ambiguity_flag = final_confidence < 0.70
-
-        mock_response = AIProxyResponse(
-            scenario_id=request_body.get("scenario_id", "demo-scenario-001"),
-            prediction=final_prediction,
-            epistemic_state=EpistemicState(
-                confidence=final_confidence,
-                ambiguity_flag=ambiguity_flag,
-                reasoning=[
-                    f"Applicant income adjusted to ${income}k.",
-                    "Credit history shows two late payments in the last 24 months.",
-                    "Employment tenure is short (< 1 year) — moderate risk factor.",
-                ],
-            ),
-        )
+        if STRATEGY == "mock":
+            return _predict_mock(request_body, scenario_id)
+        elif STRATEGY == "ml":
+            return _predict_ml(request_body, scenario_id)
+        elif STRATEGY == "llm":
+            return await _predict_llm(request_body, scenario_id)
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unknown strategy: {STRATEGY}",
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
-        # Strict enforcement: if mock data itself fails validation, surface it.
-        raise HTTPException(status_code=500, detail=f"Proxy schema violation: {exc}") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction failed ({STRATEGY}): {exc}",
+        ) from exc
 
-    return mock_response
+
+def _predict_mock(
+    request_body: dict[str, Any], scenario_id: str
+) -> AIProxyResponse:
+    """Original Wizard-of-Oz mock strategy — preserved for backward compat."""
+    income = request_body.get("income", 55)
+    p_approve = 0.73 + ((income - 55) * 0.005)
+    p_approve = max(0.01, min(0.99, p_approve))
+
+    is_approve = p_approve >= 0.50
+    final_prediction = "Approve with conditions" if is_approve else "Reject application"
+    final_confidence = p_approve if is_approve else (1.0 - p_approve)
+    ambiguity_flag = final_confidence < 0.70
+
+    return AIProxyResponse(
+        scenario_id=scenario_id,
+        prediction=final_prediction,
+        epistemic_state=EpistemicState(
+            confidence=final_confidence,
+            ambiguity_flag=ambiguity_flag,
+            reasoning=[
+                f"Applicant income adjusted to ${income}k.",
+                "Credit history shows two late payments in the last 24 months.",
+                "Employment tenure is short (< 1 year) — moderate risk factor.",
+            ],
+        ),
+    )
+
+
+def _predict_ml(
+    request_body: dict[str, Any], scenario_id: str
+) -> AIProxyResponse:
+    """ML strategy — uses trained LogisticRegression model."""
+    if not ml_engine.is_loaded():
+        raise HTTPException(
+            status_code=503,
+            detail="ML model not loaded. Run train_model.py first.",
+        )
+
+    result = ml_engine.predict(request_body)
+
+    pred_label = result["prediction"]
+    prediction_text = (
+        "Approve with conditions" if pred_label == "approve" else "Reject application"
+    )
+
+    return AIProxyResponse(
+        scenario_id=scenario_id,
+        prediction=prediction_text,
+        epistemic_state=EpistemicState(
+            confidence=result["confidence"],
+            ambiguity_flag=result["ambiguity_flag"],
+            reasoning=result["reasoning"],
+        ),
+    )
+
+
+async def _predict_llm(
+    request_body: dict[str, Any], scenario_id: str
+) -> AIProxyResponse:
+    """LLM strategy — ML model for confidence + Gemini for reasoning."""
+    if not ml_engine.is_loaded():
+        raise HTTPException(
+            status_code=503,
+            detail="ML model not loaded. Run train_model.py first.",
+        )
+
+    result = ml_engine.predict(request_body)
+
+    pred_label = result["prediction"]
+    prediction_text = (
+        "Approve with conditions" if pred_label == "approve" else "Reject application"
+    )
+
+    # Try LLM reasoning, fall back to template
+    reasoning = result["reasoning"]  # template fallback
+    if llm_engine.is_available():
+        llm_reasoning = await llm_engine.generate_reasoning(
+            features=request_body,
+            prediction=pred_label,
+            confidence=result["confidence"],
+            feature_contributions=result.get("feature_contributions"),
+        )
+        if llm_reasoning:
+            reasoning = llm_reasoning
+
+    return AIProxyResponse(
+        scenario_id=scenario_id,
+        prediction=prediction_text,
+        epistemic_state=EpistemicState(
+            confidence=result["confidence"],
+            ambiguity_flag=result["ambiguity_flag"],
+            reasoning=reasoning,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Model Info Endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/model/info")
+async def model_info() -> dict[str, Any]:
+    """Return metadata about the current prediction strategy and model."""
+    info: dict[str, Any] = {
+        "strategy": STRATEGY,
+        "llm_available": llm_engine.is_available() if STRATEGY == "llm" else False,
+    }
+
+    if STRATEGY in ("ml", "llm"):
+        info["ml_model"] = ml_engine.get_model_info()
+
+    return info
 
 
 # ---------------------------------------------------------------------------

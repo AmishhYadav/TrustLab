@@ -353,6 +353,10 @@ export default function CounterfactualEngine({
             body: JSON.stringify({
               scenario_id: scenarioId,
               income: value,
+              credit_score: creditScore,
+              employment_length: employmentLength,
+              debt_to_income: scenario?.input_features?.debt_to_income ?? 0.30,
+              loan_amount: scenario?.input_features?.loan_amount ?? 50,
             }),
           });
 
