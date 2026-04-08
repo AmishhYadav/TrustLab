@@ -59,7 +59,7 @@ const PLAYGROUND_DEFAULTS = {
 };
 
 const BASE_CONFIDENCE = 0.73;
-const BASE_AMBIGUITY_THRESHOLD = 0.55;
+const BASE_AMBIGUITY_THRESHOLD = 0.70;
 
 const CHALLENGE_TAGS = [
   "Missed context",

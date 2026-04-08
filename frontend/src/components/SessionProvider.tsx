@@ -8,23 +8,27 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
 
 // ---------------------------------------------------------------------------
-// Context
+// Context & Types
 // ---------------------------------------------------------------------------
+
+export interface User {
+  id: string;
+  username: string;
+}
 
 interface SessionContextValue {
-  /** The unique participant identifier for this study session. */
+  /** The authenticated user for this session. */
+  user: User | null;
+  /** Fallback for telemetry backwards-compatibility */
   participantId: string;
+  /** Log out the current user */
+  logout: () => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
-/**
- * Hook to access the current participant session.
- * Must be called inside <SessionProvider>.
- */
 export function useSession(): SessionContextValue {
   const ctx = useContext(SessionContext);
   if (!ctx) {
@@ -37,42 +41,53 @@ export function useSession(): SessionContextValue {
 // Provider
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY = "trustlab_participant_id";
+const STORAGE_KEY = "trustlab_auth_user";
 
 export default function SessionProvider({ children }: { children: ReactNode }) {
-  const searchParams = useSearchParams();
-  const [participantId, setParticipantId] = useState<string>("");
+  const [user, setUser] = useState<User | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
 
+  // -- Hydrate from Local Storage
   useEffect(() => {
-    // Priority: URL param > sessionStorage > generate new
-    const fromUrl = searchParams.get("participant");
-
-    if (fromUrl) {
-      setParticipantId(fromUrl);
-      sessionStorage.setItem(STORAGE_KEY, fromUrl);
-      return;
-    }
-
-    const stored = sessionStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      setParticipantId(stored);
-      return;
+      try {
+        const parsed = JSON.parse(stored);
+        setUser(parsed);
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+      }
     }
+    setIsInitializing(false);
+  }, []);
 
-    const generated = crypto.randomUUID();
-    setParticipantId(generated);
-    sessionStorage.setItem(STORAGE_KEY, generated);
-  }, [searchParams]);
+  const logout = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setUser(null);
+    // Navigate to login — we use window.location for a clean state reset
+    window.location.href = "/login";
+  };
 
   const value = useMemo<SessionContextValue>(
-    () => ({ participantId }),
-    [participantId],
+    () => ({
+      user,
+      participantId: user?.id || "anonymous",
+      logout,
+    }),
+    [user]
   );
 
-  // Don't render children until we have an ID (avoids hydration flash)
-  if (!participantId) return null;
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-neutral-700 border-t-blue-400" />
+      </div>
+    );
+  }
 
   return (
-    <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
+    <SessionContext.Provider value={value}>
+      {children}
+    </SessionContext.Provider>
   );
 }

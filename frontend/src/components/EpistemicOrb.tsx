@@ -37,7 +37,7 @@ export default function EpistemicOrb({
   const coreColor = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 
   // Warning state: amber for ambiguity
-  const ambiguityColor = "hsl(38, 92%, 50%)";
+  const ambiguityColor = "#f59e0b"; // Valid hex so we can concatenate alpha like + '50' or +'10'
   const activeColor = ambiguity ? ambiguityColor : coreColor;
 
   return (

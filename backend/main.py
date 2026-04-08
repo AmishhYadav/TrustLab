@@ -16,10 +16,20 @@ from pydantic import BaseModel, Field
 # App
 # ---------------------------------------------------------------------------
 
+from contextlib import asynccontextmanager
+
+from database import init_db, get_or_create_user, insert_event
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
 app = FastAPI(
     title="TrustLab API",
     description="Model-agnostic proxy and telemetry service for trust calibration research.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -88,17 +98,41 @@ class TrustEvent(BaseModel):
     )
 
 
+class AuthRequest(BaseModel):
+    username: str = Field(..., description="The requested username to login with.")
+
+class AuthResponse(BaseModel):
+    id: str
+    username: str
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def login(req: AuthRequest) -> dict[str, Any]:
+    """Login or create user."""
+    user = get_or_create_user(req.username)
+    return user
 
 
 @app.post("/api/telemetry", status_code=201)
 async def post_telemetry(event: TrustEvent) -> dict[str, str]:
     """Ingest a telemetry event from the frontend."""
     logger.info("TELEMETRY | %s | %s | %s", event.participant_id, event.event_type, event.timestamp)
-    # In later phases this will write to PostgreSQL / ClickHouse.
-    # For now, console logging satisfies INFRA-02.
+    # Insert telemetry into SQLite DB
+    try:
+        insert_event(
+            user_id=event.participant_id,
+            event_type=event.event_type,
+            timestamp=event.timestamp,
+            metadata=event.metadata_payload
+        )
+    except Exception as e:
+        logger.error(f"Failed to insert event into DB: {e}")
+        # Even if DB insert fails, we don't want to crash the frontend, just log it.
+        
     return {"status": "recorded"}
 
 
@@ -119,7 +153,7 @@ async def proxy_predict(request_body: dict[str, Any]) -> AIProxyResponse:
         is_approve = p_approve >= 0.50
         final_prediction = "Approve with conditions" if is_approve else "Reject application"
         final_confidence = p_approve if is_approve else (1.0 - p_approve)
-        ambiguity_flag = final_confidence < 0.60
+        ambiguity_flag = final_confidence < 0.70
 
         mock_response = AIProxyResponse(
             scenario_id=request_body.get("scenario_id", "demo-scenario-001"),

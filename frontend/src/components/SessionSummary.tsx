@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
 import {
   BarChart3,
   CheckCircle,
@@ -65,6 +66,7 @@ const TRUST_STATE_COLORS: Record<TrustState, string> = {
 // ---------------------------------------------------------------------------
 
 export default function SessionSummary() {
+  const router = useRouter();
   const { roundResults, resetExperiment } = useScenario();
   const { trustHistory } = useTrustEngine();
   const { participantId } = useSession();
@@ -549,7 +551,7 @@ export default function SessionSummary() {
         <motion.button
           whileHover={{ scale: 1.03, y: -1 }}
           whileTap={{ scale: 0.97 }}
-          onClick={resetExperiment}
+          onClick={() => { resetExperiment(); router.push("/landing"); }}
           className="flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-6 py-3.5 text-sm font-semibold text-blue-300 transition-all duration-200 hover:bg-blue-500/20 hover:border-blue-400/50"
         >
           <RotateCcw size={16} />
