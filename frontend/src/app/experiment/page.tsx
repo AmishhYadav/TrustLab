@@ -41,8 +41,12 @@ export default function ExperimentPage() {
   }, [isComplete, router]);
 
   const handleRoundComplete = useCallback(
-    (userDecision: "approve" | "reject", responseTimeMs: number) => {
-      completeRound(userDecision, responseTimeMs);
+    (userDecision: "approve" | "reject", responseTimeMs: number, cueData?: {
+      wasOverReliantCued: boolean;
+      originalDecision: "approve" | "reject" | null;
+      changedAfterCue: boolean;
+    }) => {
+      completeRound(userDecision, responseTimeMs, cueData);
     },
     [completeRound],
   );

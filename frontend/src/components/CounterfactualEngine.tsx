@@ -75,6 +75,11 @@ interface CounterfactualEngineProps {
   onRoundComplete?: (
     userDecision: "approve" | "reject",
     responseTimeMs: number,
+    cueData?: {
+      wasOverReliantCued: boolean;
+      originalDecision: "approve" | "reject" | null;
+      changedAfterCue: boolean;
+    },
   ) => void;
 }
 
@@ -152,6 +157,10 @@ export default function CounterfactualEngine({
   // Decision recorded confirmation (for playground + experiment)
   const [showConfirmation, setShowConfirmation] = useState(false);
 
+  // Over-reliance intervention state
+  const [showOverRelianceCue, setShowOverRelianceCue] = useState(false);
+  const [originalOverReliantDecision, setOriginalOverReliantDecision] = useState<"approve" | "reject" | null>(null);
+
   // Transition animation key
   const [scenarioKey, setScenarioKey] = useState(scenarioId);
 
@@ -176,6 +185,8 @@ export default function CounterfactualEngine({
     setReasoningText("");
     setSelectedTags([]);
     setShowConfirmation(false);
+    setShowOverRelianceCue(false);
+    setOriginalOverReliantDecision(null);
     roundStartRef.current = Date.now();
     resetForNewRound();
     setScenarioKey(scenario.scenario_id);
@@ -255,20 +266,25 @@ export default function CounterfactualEngine({
       const aiApproves = prediction.toLowerCase().includes("approve");
       const userApproves = outcome === "approve";
 
+      // If user is over-reliant and agrees with AI, intercept to show cue
+      if (isOverReliant && aiApproves === userApproves && mode === "experiment") {
+        setOriginalOverReliantDecision(outcome);
+        setShowOverRelianceCue(true);
+        return;
+      }
+
       if (aiApproves === userApproves) {
         // Agreement — complete round
         const responseTime = Date.now() - roundStartRef.current;
         submitDecision();
 
         if (mode === "experiment" && onRoundComplete) {
-          // Show confirmation, then advance after animation
           setShowConfirmation(true);
           setTimeout(() => {
             setShowConfirmation(false);
             onRoundComplete(outcome, responseTime);
           }, 1200);
         } else {
-          // Playground mode — show confirmation
           setShowConfirmation(true);
           setTimeout(() => setShowConfirmation(false), 2000);
         }
@@ -280,7 +296,56 @@ export default function CounterfactualEngine({
         setIsChallenging(true);
       }
     },
-    [prediction, submitDecision, mode, onRoundComplete],
+    [prediction, submitDecision, mode, onRoundComplete, isOverReliant],
+  );
+
+  // ------------------------------------------------------------------
+  // Over-reliance cue: user confirms original decision ("I'm sure")
+  // ------------------------------------------------------------------
+  const handleConfirmOverReliantDecision = useCallback(() => {
+    if (!originalOverReliantDecision) return;
+    const responseTime = Date.now() - roundStartRef.current;
+    submitDecision();
+
+    setShowOverRelianceCue(false);
+    if (mode === "experiment" && onRoundComplete) {
+      setShowConfirmation(true);
+      setTimeout(() => {
+        setShowConfirmation(false);
+        onRoundComplete(originalOverReliantDecision, responseTime, {
+          wasOverReliantCued: true,
+          originalDecision: originalOverReliantDecision,
+          changedAfterCue: false,
+        });
+        setOriginalOverReliantDecision(null);
+      }, 1200);
+    }
+  }, [originalOverReliantDecision, submitDecision, mode, onRoundComplete]);
+
+  // ------------------------------------------------------------------
+  // Over-reliance cue: user changes their decision
+  // ------------------------------------------------------------------
+  const handleChangeOverReliantDecision = useCallback(
+    (newDecision: "approve" | "reject") => {
+      if (!originalOverReliantDecision) return;
+      const responseTime = Date.now() - roundStartRef.current;
+      submitDecision();
+
+      setShowOverRelianceCue(false);
+      if (mode === "experiment" && onRoundComplete) {
+        setShowConfirmation(true);
+        setTimeout(() => {
+          setShowConfirmation(false);
+          onRoundComplete(newDecision, responseTime, {
+            wasOverReliantCued: true,
+            originalDecision: originalOverReliantDecision,
+            changedAfterCue: newDecision !== originalOverReliantDecision,
+          });
+          setOriginalOverReliantDecision(null);
+        }, 1200);
+      }
+    },
+    [originalOverReliantDecision, submitDecision, mode, onRoundComplete],
   );
 
   // ------------------------------------------------------------------
@@ -533,9 +598,9 @@ export default function CounterfactualEngine({
               reasoning={reasoning}
             />
 
-            {/* Over-reliance counter-argument injection */}
+            {/* Over-reliance warning (passive, shown before decision) */}
             <AnimatePresence>
-              {isOverReliant && (
+              {isOverReliant && !showOverRelianceCue && (
                 <motion.div
                   initial={{ opacity: 0, y: -10, height: 0 }}
                   animate={{ opacity: 1, y: 0, height: "auto" }}
@@ -566,6 +631,92 @@ export default function CounterfactualEngine({
                       </p>
                     </div>
                   </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Over-reliance INTERVENTION panel (shown after they click) */}
+            <AnimatePresence>
+              {showOverRelianceCue && originalOverReliantDecision && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                  transition={{ type: "spring", damping: 22, stiffness: 280 }}
+                  className="w-full max-w-2xl rounded-2xl border border-red-500/40 bg-gradient-to-b from-red-950/40 to-neutral-900/90 backdrop-blur-xl p-6 space-y-5"
+                >
+                  {/* Header */}
+                  <div className="flex items-center gap-3">
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1], opacity: [0.7, 1, 0.7] }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                      className="h-10 w-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center"
+                    >
+                      <ShieldAlert size={22} className="text-red-400" />
+                    </motion.div>
+                    <div>
+                      <h3 className="text-base font-semibold text-red-200">
+                        Over-reliance Detected
+                      </h3>
+                      <p className="text-xs text-red-400/70">
+                        You decided very quickly without exploring the data.
+                        Your choice:{" "}
+                        <span className="font-medium text-white capitalize">
+                          {originalOverReliantDecision}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Warning message */}
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="rounded-lg border border-red-500/30 bg-red-950/30 px-4 py-3 text-sm leading-relaxed text-red-300"
+                  >
+                    <p className="font-medium mb-1">Take a moment to reconsider:</p>
+                    <ul className="text-xs text-red-400/80 space-y-1 list-disc list-inside">
+                      <li>The model&apos;s training data may be sparse for this profile</li>
+                      <li>Have you reviewed the applicant&apos;s features thoroughly?</li>
+                      <li>Try adjusting the counterfactual controls above to understand the AI&apos;s sensitivity</li>
+                    </ul>
+                  </motion.div>
+
+                  {/* Action buttons */}
+                  <div className="space-y-3">
+                    <p className="text-xs text-neutral-500 uppercase tracking-wider text-center">
+                      What would you like to do?
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <motion.button
+                        whileHover={{ scale: 1.02, y: -1 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={handleConfirmOverReliantDecision}
+                        className="flex-1 rounded-xl border border-neutral-700 bg-neutral-800/60 backdrop-blur-sm px-4 py-3 text-sm font-semibold text-neutral-300 transition-all duration-200 hover:border-neutral-600 hover:bg-neutral-700/60 hover:text-white"
+                      >
+                        <span className="flex items-center justify-center gap-2">
+                          <CheckCircle size={16} />
+                          I&apos;m Sure — Keep {originalOverReliantDecision === "approve" ? "Approve" : "Reject"}
+                        </span>
+                      </motion.button>
+
+                      <motion.button
+                        whileHover={{ scale: 1.02, y: -1 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() =>
+                          handleChangeOverReliantDecision(
+                            originalOverReliantDecision === "approve" ? "reject" : "approve"
+                          )
+                        }
+                        className="flex-1 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-600/20 to-amber-500/10 backdrop-blur-sm px-4 py-3 text-sm font-semibold text-amber-300 transition-all duration-200 hover:border-amber-400/50 hover:from-amber-600/30 hover:to-amber-500/20 hover:text-amber-200"
+                      >
+                        <span className="flex items-center justify-center gap-2">
+                          <XCircle size={16} />
+                          Change to {originalOverReliantDecision === "approve" ? "Reject" : "Approve"}
+                        </span>
+                      </motion.button>
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -682,7 +833,7 @@ export default function CounterfactualEngine({
         )}
 
         {/* Decision outcome buttons OR Street Fight Mode OR Confirmation (experiment only) */}
-        {hasData && mode === "experiment" && (
+        {hasData && mode === "experiment" && !showOverRelianceCue && (
           <AnimatePresence mode="wait">
             {showConfirmation ? (
               <motion.div

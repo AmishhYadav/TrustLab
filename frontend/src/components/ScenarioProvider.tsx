@@ -33,6 +33,12 @@ export interface RoundResult {
   response_time_ms: number;
   round_index: number;
   timestamp: number;
+  /** Whether this round triggered an over-reliance intervention cue. */
+  was_over_reliant_cued: boolean;
+  /** The user's original decision BEFORE seeing the cue (null if no cue shown). */
+  original_decision: "approve" | "reject" | null;
+  /** Whether the user changed their decision after seeing the cue. */
+  changed_after_cue: boolean;
 }
 
 interface ScenarioContextValue {
@@ -61,6 +67,11 @@ interface ScenarioContextValue {
   completeRound: (
     userDecision: "approve" | "reject",
     responseTimeMs: number,
+    cueData?: {
+      wasOverReliantCued: boolean;
+      originalDecision: "approve" | "reject" | null;
+      changedAfterCue: boolean;
+    },
   ) => void;
 
   /** Reset everything for a fresh experiment run. */
@@ -162,7 +173,11 @@ export default function ScenarioProvider({
 
   // ── Complete round ──────────────────────────────────────────────────
   const completeRound = useCallback(
-    (userDecision: "approve" | "reject", responseTimeMs: number) => {
+    (userDecision: "approve" | "reject", responseTimeMs: number, cueData?: {
+      wasOverReliantCued: boolean;
+      originalDecision: "approve" | "reject" | null;
+      changedAfterCue: boolean;
+    }) => {
       if (!currentScenario) return;
 
       const aiCorrect =
@@ -180,6 +195,9 @@ export default function ScenarioProvider({
         response_time_ms: responseTimeMs,
         round_index: currentScenarioIndex,
         timestamp: Date.now(),
+        was_over_reliant_cued: cueData?.wasOverReliantCued ?? false,
+        original_decision: cueData?.originalDecision ?? null,
+        changed_after_cue: cueData?.changedAfterCue ?? false,
       };
 
       // Fire telemetry
