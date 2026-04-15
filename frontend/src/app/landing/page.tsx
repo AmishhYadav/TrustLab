@@ -5,9 +5,9 @@ import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TrustLab: Full Cinematic Experience — Landing Page
+   Aletheia: Full Cinematic Experience — Landing Page
    Scroll-triggered expansion storytelling with narrative overlays.
-   Based on Stitch screen: "TrustLab: Full Cinematic Experience"
+   Based on Stitch screen: "Aletheia: Full Cinematic Experience"
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function LandingPage() {
@@ -84,7 +84,7 @@ export default function LandingPage() {
       {/* ═══ Navigation ═══════════════════════════════════════════════════ */}
       <nav className="fixed top-0 z-[100] flex w-full items-center justify-between px-8 py-6 mix-blend-difference">
         <div className="text-2xl font-black tracking-tighter text-white">
-          TrustLab
+          Aletheia
         </div>
         <div className="hidden gap-10 text-sm font-medium uppercase tracking-wide text-white/50 md:flex">
           <a href="#section-hero" className="transition-colors hover:text-white">
@@ -352,9 +352,9 @@ export default function LandingPage() {
       >
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-10 md:flex-row">
           <div className="space-y-4">
-            <div className="text-2xl font-black text-white">TrustLab</div>
+            <div className="text-2xl font-black text-white">Aletheia</div>
             <p className="text-xs font-medium uppercase tracking-widest text-[#c7c4d7]/50">
-              © 2024 TrustLab Intelligence. Calibration through transparency.
+              © 2024 Aletheia Intelligence. Calibration through transparency.
             </p>
           </div>
           <div className="flex gap-12 text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">

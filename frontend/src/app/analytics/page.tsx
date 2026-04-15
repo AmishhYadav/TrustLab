@@ -25,7 +25,7 @@ export default function AnalyticsPage() {
           className="text-center space-y-6"
         >
           <h1 className="text-3xl font-bold tracking-tight">
-            Trust<span className="text-blue-400">Lab</span>
+            Ale<span className="text-blue-400">theia</span>
           </h1>
           <p className="text-neutral-500 text-sm max-w-md">
             No experiment data found. Complete an experiment first to see your analytics dashboard.
@@ -55,7 +55,7 @@ export default function AnalyticsPage() {
       {/* Header */}
       <header className="mb-8 text-center space-y-2">
         <h1 className="text-4xl font-bold tracking-tight">
-          Trust<span className="text-blue-400">Lab</span>
+          Ale<span className="text-blue-400">theia</span>
         </h1>
         <p className="text-neutral-500 text-sm">
           Human–AI Trust Calibration Platform

@@ -24,7 +24,7 @@ import ProgressBar from "@/components/ProgressBar";
 
 export default function ExperimentPage() {
   const router = useRouter();
-  const { participantId } = useSession();
+  const { participantId, user } = useSession();
   const {
     mode,
     setMode,
@@ -56,14 +56,14 @@ export default function ExperimentPage() {
       {/* Header */}
       <header className="mb-12 text-center space-y-2">
         <h1 className="text-4xl font-bold tracking-tight">
-          Trust<span className="text-blue-400">Lab</span>
+          Ale<span className="text-blue-400">theia</span>
         </h1>
         <p className="text-neutral-500 text-sm">
           Human–AI Trust Calibration Platform
         </p>
         <div className="inline-block rounded-md bg-neutral-900 border border-neutral-800 px-3 py-1 text-xs font-mono text-neutral-500 mt-2">
           participant:{" "}
-          <span className="text-emerald-400">{participantId}</span>
+          <span className="text-emerald-400">{user?.username || "anonymous"}</span>
         </div>
       </header>
 

@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "TrustLab — Human–AI Trust Calibration",
+  title: "Aletheia — Human–AI Trust Calibration",
   description:
     "An adaptive interface for studying and improving trust calibration between humans and AI systems.",
 };

@@ -19,6 +19,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSignup, setIsSignup] = useState(false);
+  const [authSuccess, setAuthSuccess] = useState(false);
   
   const dragY = useMotionValue(0);
 
@@ -43,34 +45,40 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) return;
+    if (!username.trim() || !password.trim()) {
+      setError("Username and password are required.");
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
 
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/auth/login`, {
+      const endpoint = isSignup ? "/api/auth/signup" : "/api/auth/login";
+      const resp = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim() }),
+        body: JSON.stringify({ 
+          username: username.trim(),
+          password: password.trim()
+        }),
       });
 
-      if (!resp.ok) throw new Error("Authentication failed");
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => null);
+        throw new Error(errData?.detail || "Authentication failed");
+      }
 
       const userData = await resp.json();
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ id: userData.id, username: userData.username })
       );
-      router.push("/landing");
-    } catch {
-      setError("Could not connect to backend. Using local session.");
-      const localUser = {
-        id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        username: username.trim(),
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(localUser));
-      setTimeout(() => router.push("/landing"), 800);
+      
+      setAuthSuccess(true);
+      setTimeout(() => router.push("/landing"), 1500);
+    } catch (err: any) {
+      setError(err.message || "An error occurred");
     } finally {
       setIsLoading(false);
     }
@@ -182,71 +190,101 @@ export default function LoginPage() {
             ease: [0.175, 0.885, 0.32, 1.275],
           }}
         >
-          <h2 className="mb-6 text-center text-2xl font-medium text-white">
-            Welcome
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="mb-2 ml-1 block text-[0.85rem] text-[#999]">
-                Username
-              </label>
-              <input
-                type="text"
-                placeholder="Your name"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full rounded-[15px] border border-transparent bg-white/[0.07] px-[18px] py-[14px] text-base text-white outline-none transition-all duration-300 placeholder:text-white/30 focus:border-[#d4a373] focus:bg-white/[0.12]"
-              />
-            </div>
-            <div>
-              <label className="mb-2 ml-1 block text-[0.85rem] text-[#999]">
-                Password
-              </label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-[15px] border border-transparent bg-white/[0.07] px-[18px] py-[14px] text-base text-white outline-none transition-all duration-300 placeholder:text-white/30 focus:border-[#d4a373] focus:bg-white/[0.12]"
-              />
-            </div>
-
-            {error && (
-              <motion.div
-                initial={{ opacity: 0, y: -5 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2.5 text-xs text-amber-300"
-              >
-                {error}
-              </motion.div>
-            )}
-
-            <button
-              type="submit"
-              disabled={isLoading || !username.trim()}
-              className="mt-2.5 w-full rounded-[15px] border-none py-[15px] text-base font-semibold text-[#121417] transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background:
-                  "linear-gradient(135deg, #bf953f, #fcf6ba, #b38728, #fcf6ba, #aa771c)",
-              }}
+          {authSuccess ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex flex-col items-center justify-center py-8"
             >
-              {isLoading ? (
-                <span className="inline-block animate-spin">⟳</span>
-              ) : (
-                "Sign In"
-              )}
-            </button>
-          </form>
+              <h2 className="text-3xl font-light text-white mb-2">Welcome</h2>
+              <p className="text-2xl font-bold tracking-wide" style={{ color: "#fcf6ba" }}>{username}</p>
+            </motion.div>
+          ) : (
+            <>
+              <h2 className="mb-6 text-center text-2xl font-medium text-white">
+                {isSignup ? "Create Account" : "Welcome Back"}
+              </h2>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                <div>
+                  <label className="mb-2 ml-1 block text-[0.85rem] text-[#999]">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Your name"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full rounded-[15px] border border-transparent bg-white/[0.07] px-[18px] py-[14px] text-base text-white outline-none transition-all duration-300 placeholder:text-white/30 focus:border-[#d4a373] focus:bg-white/[0.12]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-2 ml-1 block text-[0.85rem] text-[#999]">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full rounded-[15px] border border-transparent bg-white/[0.07] px-[18px] py-[14px] text-base text-white outline-none transition-all duration-300 placeholder:text-white/30 focus:border-[#d4a373] focus:bg-white/[0.12]"
+                  />
+                </div>
+
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-4 py-2.5 text-xs text-amber-300"
+                  >
+                    {error}
+                  </motion.div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isLoading || !username.trim() || !password.trim()}
+                  className="mt-2.5 w-full rounded-[15px] border-none py-[15px] text-base font-semibold text-[#121417] transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #bf953f, #fcf6ba, #b38728, #fcf6ba, #aa771c)",
+                  }}
+                >
+                  {isLoading ? (
+                    <span className="inline-block animate-spin">⟳</span>
+                  ) : isSignup ? (
+                    "Sign Up"
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignup(!isSignup);
+                      setError(null);
+                    }}
+                    className="text-white/40 hover:text-white/80 text-sm transition-colors"
+                  >
+                    {isSignup
+                      ? "Already have an account? Sign In"
+                      : "Need an account? Sign Up"}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </motion.div>
       </div>
 
       {/* Hint text */}
       <motion.p
-        className="absolute bottom-8 text-xs text-white/20 tracking-widest uppercase"
+        className="absolute bottom-10 text-sm font-bold text-white/80 tracking-widest uppercase animate-pulse"
         animate={{ opacity: isOn ? 0 : 1 }}
         transition={{ duration: 0.3 }}
       >
-        Click the cord to begin
+        Pull down to login
       </motion.p>
     </main>
   );

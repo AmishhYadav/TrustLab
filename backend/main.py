@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from contextlib import asynccontextmanager
 
-from database import init_db, get_or_create_user, insert_event
+from database import init_db, authenticate_user, signup_user, insert_event
 import ml_engine
 import llm_engine
 
@@ -125,6 +125,7 @@ class TrustEvent(BaseModel):
 
 class AuthRequest(BaseModel):
     username: str = Field(..., description="The requested username to login with.")
+    password: str = Field(..., description="The user's password.")
 
 class AuthResponse(BaseModel):
     id: str
@@ -137,8 +138,18 @@ class AuthResponse(BaseModel):
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 async def login(req: AuthRequest) -> dict[str, Any]:
-    """Login or create user."""
-    user = get_or_create_user(req.username)
+    """Login a user."""
+    user = authenticate_user(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    return user
+
+@app.post("/api/auth/signup", response_model=AuthResponse)
+async def signup(req: AuthRequest) -> dict[str, Any]:
+    """Create a new user account."""
+    user = signup_user(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=400, detail="Username already exists.")
     return user
 
 
