@@ -7,7 +7,7 @@ TrustLab replaces static "confidence scores" with visceral, adaptive UI componen
 ---
 
 ## 🧠 Core Philosophy
-Traditional AI interfaces present a prediction and a generic score (e.g., "95% Confident"), leading to automation bias and over-reliance. TrustLab treats trust as an **adaptive metric** that must be continuously calibrated. 
+Traditional Artificial Intelligence interfaces present a prediction and a generic score (e.g., "95% Confident"), leading to automation bias and over-reliance. TrustLab treats trust as an **adaptive metric** that must be continuously calibrated. 
 
 Instead of passive consumption, users are forced to probe predictions, visualize ambiguity logically, and rigorously justify their disagreements when contradicting the AI.
 
